@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { defaultLocation, hazardTags } from "@/components/report/reportData";
+import Navbar from "@/components/shared/Navbar";
 
 type SubmitState = "idle" | "submitted";
 
@@ -29,18 +30,7 @@ export default function ReportPortal() {
     <main className="report-page">
       <div className="report-grid-bg" />
       <div className="report-container">
-        <header className="report-header">
-          <Link href="/" className="brand-lockup" aria-label="CleanAir Command home">
-            <span className="brand-mark">CA</span>
-            <span>
-              <span className="brand-kicker">CleanAir</span>
-              <span className="brand-name">Command</span>
-            </span>
-          </Link>
-          <Link href="/map" className="report-map-link">
-            View public map
-          </Link>
-        </header>
+        <Navbar />
 
         <section className="report-hero">
           <div>

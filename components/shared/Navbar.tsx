@@ -1,5 +1,13 @@
 import Link from "next/link";
 
+  const navItems = [
+    { href: "/", label: "Home" },
+    { href: "/report", label: "Report" },
+    { href: "/map", label: "Map" },
+    { href: "/forecast", label: "Forecast" },
+    { href: "/dashboard", label: "Officials", featured: true },
+  ];
+
 export default function Navbar() {
   return (
     <nav className="site-nav" aria-label="Primary navigation">
@@ -12,11 +20,15 @@ export default function Navbar() {
       </Link>
 
       <div className="nav-links">
-        <Link href="/map">Live map</Link>
-        <Link href="/forecast">Forecast</Link>
-        <Link href="/dashboard" className="nav-officials">
-          Officials
-        </Link>
+        {navItems.map((item) => (
+          <Link
+            href={item.href}
+            key={item.href}
+            className={item.featured ? "nav-officials" : undefined}
+          >
+            {item.label}
+          </Link>
+        ))}
       </div>
     </nav>
   );

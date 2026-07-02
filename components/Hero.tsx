@@ -1,7 +1,7 @@
 import HeroSection from "@/components/landing/HeroSection";
 import HowItWorks from "@/components/landing/HowItWorks";
 import JurySnapshot from "@/components/landing/JurySnapshot";
-import Navbar from "@/components/landing/Navbar";
+import Navbar from "@/components/shared/Navbar";
 
 export default function Hero() {
   return (
