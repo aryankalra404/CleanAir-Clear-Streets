@@ -4,13 +4,17 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { defaultLocation, hazardTags } from "@/components/report/reportData";
 import Navbar from "@/components/shared/Navbar";
+import { submitCitizenReport } from "@/lib/reportSubmissions";
 
-type SubmitState = "idle" | "submitted";
+type SubmitState = "idle" | "submitting" | "submitted" | "error";
 
 export default function ReportPortal() {
   const [selectedTag, setSelectedTag] = useState(hazardTags[0].id);
   const [anonymous, setAnonymous] = useState(true);
   const [location, setLocation] = useState(defaultLocation);
+  const [note, setNote] = useState("");
+  const [submissionId, setSubmissionId] = useState("");
+  const [storedInFirebase, setStoredInFirebase] = useState(false);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
 
   const selectedHazard = useMemo(
@@ -22,8 +26,26 @@ export default function ReportPortal() {
     setLocation(defaultLocation);
   }
 
-  function handleSubmit() {
-    setSubmitState("submitted");
+  async function handleSubmit() {
+    setSubmitState("submitting");
+
+    try {
+      const submission = await submitCitizenReport({
+        anonymous,
+        aiConfidence: selectedHazard.confidence,
+        hazardId: selectedHazard.id,
+        hazardLabel: selectedHazard.label,
+        location,
+        note,
+        result: selectedHazard.result,
+      });
+
+      setSubmissionId(submission.id);
+      setStoredInFirebase(submission.stored);
+      setSubmitState("submitted");
+    } catch {
+      setSubmitState("error");
+    }
   }
 
   return (
@@ -117,6 +139,8 @@ export default function ReportPortal() {
             <label className="note-field">
               Optional note or voice transcript
               <textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
                 placeholder="Example: black smoke from garbage pile near service road, strong smell, visible since 8:30 AM"
                 rows={4}
               />
@@ -131,8 +155,12 @@ export default function ReportPortal() {
               Submit anonymously
             </label>
 
-            <button className="btn btn-primary report-submit" type="submit">
-              Submit Report
+            <button
+              className="btn btn-primary report-submit"
+              disabled={submitState === "submitting"}
+              type="submit"
+            >
+              {submitState === "submitting" ? "Submitting..." : "Submit Report"}
             </button>
           </form>
 
@@ -161,13 +189,25 @@ export default function ReportPortal() {
 
             {submitState === "submitted" && (
               <div className="submission-card" role="status">
-                <strong>Report submitted</strong>
+                <strong>
+                  {storedInFirebase ? "Report saved to Firebase" : "Report submitted"}
+                </strong>
                 <p>
                   Your report helped flag a possible hotspot near{" "}
                   {location.label}. Municipal teams will see it in the incident
                   queue after validation.
                 </p>
+                {submissionId && <small>Submission ID: {submissionId}</small>}
                 <Link href="/map">See nearby hotspots</Link>
+              </div>
+            )}
+
+            {submitState === "error" && (
+              <div className="submission-card error" role="alert">
+                <strong>Could not save report</strong>
+                <p>
+                  Check Firestore setup and security rules, then try submitting again.
+                </p>
               </div>
             )}
           </aside>
