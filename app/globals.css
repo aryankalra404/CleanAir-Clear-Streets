@@ -42,6 +42,7 @@
 
 html {
   background: var(--background);
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -68,7 +69,10 @@ a {
   position: relative;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
-  background: var(--surface-tint);
+  background:
+    radial-gradient(circle at 68% 42%, rgba(94, 234, 212, 0.13), transparent 34%),
+    radial-gradient(circle at 22% 72%, rgba(255, 255, 255, 0.92), transparent 30%),
+    linear-gradient(180deg, #f7fbf8 0%, var(--surface-tint) 58%, #eef4f1 100%);
 }
 
 .landing-grid-bg,
@@ -750,6 +754,7 @@ a {
 
 .placeholder-panel {
   width: 100%;
+  min-height: 520px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.94);
