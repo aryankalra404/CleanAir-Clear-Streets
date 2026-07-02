@@ -1444,6 +1444,7 @@ a {
 
 .evidence-preview,
 .ai-analysis-card,
+.evidence-trail-card,
 .recommended-action-card,
 .dispatch-actions {
   margin: 14px;
@@ -1514,6 +1515,7 @@ a {
 }
 
 .ai-analysis-card,
+.evidence-trail-card,
 .recommended-action-card {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1522,6 +1524,7 @@ a {
 }
 
 .ai-analysis-card p,
+.evidence-trail-card > p,
 .recommended-action-card p {
   color: var(--teal-dark);
   font-size: 0.7rem;
@@ -1554,12 +1557,64 @@ a {
 }
 
 .ai-analysis-card small,
+.evidence-trail-card small,
 .recommended-action-card span {
   display: block;
   margin-top: 10px;
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.55;
+}
+
+.evidence-score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.evidence-score-row strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.evidence-score-row span {
+  border-radius: 999px;
+  background: #eef2f0;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.evidence-trail-card ul {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.evidence-trail-card li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.evidence-trail-card li span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.evidence-trail-card li strong {
+  color: #344054;
+  font-size: 0.78rem;
+  text-align: right;
+  text-transform: capitalize;
 }
 
 .dispatch-actions {

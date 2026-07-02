@@ -14,6 +14,38 @@ export type Source = "citizen" | "sensor" | "satellite";
 
 export type HealthRisk = "low" | "medium" | "high";
 
+export interface IncidentEvidence {
+  alertReason: string;
+  citizenSignal: {
+    reportCount: number;
+    windowMinutes: number;
+    averageConfidence: number;
+  };
+  coverage: {
+    level: "good" | "limited" | "low";
+    nearestSensorKm: number;
+    label: string;
+  };
+  fusion: {
+    finalConfidence: number;
+    coverageAdjusted: boolean;
+    h3CellId: string;
+    visualWeight: number;
+    sensorWeight: number;
+    satelliteWeight: number;
+  };
+  satellite: {
+    source: "Earth Engine";
+    signal: string;
+    lastPassTime: string;
+    freshness: "fresh" | "stale";
+  };
+  sensor: {
+    pm25Delta: number;
+    trend: "rising" | "flat" | "falling";
+  };
+}
+
 export interface Incident {
   id: string;
   photoUrl: string;
@@ -29,6 +61,7 @@ export interface Incident {
   isAnonymous: boolean;
   neighborhood: string;
   corroboratingReports?: number;
+  evidence?: IncidentEvidence;
 }
 
 export interface ForecastPoint {

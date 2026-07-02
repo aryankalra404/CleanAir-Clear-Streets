@@ -15,6 +15,7 @@ export default function ReportPortal() {
   const [note, setNote] = useState("");
   const [submissionId, setSubmissionId] = useState("");
   const [storedInFirebase, setStoredInFirebase] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
 
   const selectedHazard = useMemo(
@@ -28,6 +29,7 @@ export default function ReportPortal() {
 
   async function handleSubmit() {
     setSubmitState("submitting");
+    setSubmitError("");
 
     try {
       const submission = await submitCitizenReport({
@@ -43,7 +45,8 @@ export default function ReportPortal() {
       setSubmissionId(submission.id);
       setStoredInFirebase(submission.stored);
       setSubmitState("submitted");
-    } catch {
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Unknown Firebase error");
       setSubmitState("error");
     }
   }
@@ -208,6 +211,7 @@ export default function ReportPortal() {
                 <p>
                   Check Firestore setup and security rules, then try submitting again.
                 </p>
+                {submitError && <small>{submitError}</small>}
               </div>
             )}
           </aside>
