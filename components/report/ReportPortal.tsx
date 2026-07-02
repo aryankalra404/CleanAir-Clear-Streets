@@ -35,18 +35,13 @@ export default function ReportPortal() {
         <section className="report-hero">
           <div>
             <p className="eyebrow">Public intake</p>
-            <h1>Report smoke, dust, or burning waste in under a minute.</h1>
+            <h1>Report pollution hotspots.</h1>
             <p>
               Upload a photo, tag what you see, and share location context.
               CleanAir Command validates the report with AI, local sensors, and
               satellite signals before alerting municipal responders.
             </p>
           </div>
-          <aside className="report-trust-card">
-            <strong>No login required</strong>
-            <span>Anonymous by default</span>
-            <span>Delhi NCR pilot area</span>
-          </aside>
         </section>
 
         <section className="report-layout">

@@ -182,15 +182,15 @@ a {
 
 .hero-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(390px, 0.86fr);
+  grid-template-columns: minmax(0, 1.06fr) minmax(390px, 0.88fr);
   align-items: center;
-  gap: 58px;
+  gap: 52px;
   min-height: calc(100vh - 128px);
   padding-top: 42px;
 }
 
 .hero-copy {
-  max-width: 610px;
+  max-width: 680px;
 }
 
 .live-pill {
@@ -217,12 +217,13 @@ a {
 }
 
 .hero-copy h1 {
-  max-width: 610px;
+  max-width: 680px;
   color: var(--ink);
-  font-size: clamp(3.1rem, 4.35vw, 4.9rem);
-  font-weight: 850;
+  font-size: clamp(3.25rem, 4.65vw, 5.25rem);
+  font-weight: 780;
   letter-spacing: 0;
-  line-height: 1.02;
+  line-height: 0.98;
+  text-wrap: balance;
 }
 
 .hero-copy p {
@@ -1410,21 +1411,17 @@ a {
 }
 
 .report-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 24px;
-  align-items: center;
-  padding: 30px 0 26px;
+  padding: 56px 0 34px;
 }
 
 .report-hero h1 {
-  max-width: 700px;
   margin-top: 12px;
   color: var(--ink);
-  font-size: clamp(2.65rem, 3.65vw, 4.15rem);
+  font-size: clamp(2.6rem, 4.4vw, 4.2rem);
   font-weight: 850;
   letter-spacing: 0;
   line-height: 1.02;
+  white-space: nowrap;
 }
 
 .report-hero p {
@@ -1433,29 +1430,6 @@ a {
   color: var(--muted);
   font-size: 1.03rem;
   line-height: 1.68;
-}
-
-.report-trust-card {
-  display: grid;
-  gap: 10px;
-  align-self: end;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.88);
-  padding: 16px;
-  box-shadow: var(--shadow-sm);
-}
-
-.report-trust-card strong {
-  font-size: 1rem;
-}
-
-.report-trust-card span {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 750;
 }
 
 .report-layout {
@@ -1755,7 +1729,6 @@ a {
     grid-template-columns: 1fr;
   }
 
-  .report-hero,
   .report-layout {
     grid-template-columns: 1fr;
   }
@@ -1772,9 +1745,6 @@ a {
     grid-template-columns: 1fr;
   }
 
-  .report-trust-card {
-    max-width: 520px;
-  }
 }
 
 @media (max-width: 980px) {
@@ -1852,6 +1822,7 @@ a {
 
   .report-hero h1 {
     font-size: clamp(2.45rem, 10vw, 3.6rem);
+    white-space: normal;
   }
 
   .tag-grid,

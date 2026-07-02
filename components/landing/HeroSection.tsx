@@ -11,7 +11,7 @@ export default function HeroSection() {
           Delhi NCR neighbourhood radar live
         </div>
 
-        <h1>Find hidden pollution hotspots before they spread.</h1>
+        <h1>Detect pollution hotspots before they spread.</h1>
 
         <p>
           CleanAir Command combines citizen photos, local sensor readings, and
