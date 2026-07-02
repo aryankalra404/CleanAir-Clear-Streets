@@ -4,8 +4,7 @@ import Link from "next/link";
     { href: "/", label: "Home" },
     { href: "/report", label: "Report" },
     { href: "/map", label: "Map" },
-    { href: "/forecast", label: "Forecast" },
-    { href: "/dashboard", label: "Officials", featured: true },
+    { href: "/dashboard", label: "Command Center", featured: true },
   ];
 
 export default function Navbar() {

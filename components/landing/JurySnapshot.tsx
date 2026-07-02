@@ -13,15 +13,15 @@ const routeCards = [
     href: "/dashboard",
     access: "Officials",
     tone: "officials",
-    title: "Incident queue",
-    text: "Rank hotspots by confidence, severity, and response urgency.",
+    title: "Command Center",
+    text: "Verify hotspots, prioritize severity, and dispatch response teams.",
   },
   {
     href: "/forecast",
-    access: "Planning",
+    access: "Command Center",
     tone: "planning",
-    title: "24-hour forecast",
-    text: "Predict PM spikes so teams can deploy before exposure rises.",
+    title: "Forecast planning",
+    text: "Predict PM spikes and convert them into preemptive alerts.",
   },
 ];
 
