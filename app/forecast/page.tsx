@@ -8,17 +8,18 @@ export default function ForecastPage() {
         <Navbar />
       </div>
       <div className="app-page-container app-page-content">
-        <div className="command-header">
-          <p className="eyebrow">Command Center</p>
-          <h1>Forecast Planning</h1>
-          <p>
-            The predictive view of the same official workspace: identify
-            neighbourhood PM spikes over the next 24 hours and stage response
-            teams before exposure rises.
-          </p>
-        </div>
+        <div className="command-hero-row">
+          <div className="command-header">
+            <p className="eyebrow">Command Center</p>
+            <h1>Forecast Planning</h1>
+            <p>
+              Predict neighbourhood PM spikes over the next 24 hours and stage
+              response teams before exposure rises.
+            </p>
+          </div>
 
-        <CommandCenterTabs active="forecast" />
+          <CommandCenterTabs active="forecast" />
+        </div>
 
         <div className="placeholder-panel command-placeholder">
           <p className="text-sm font-bold uppercase tracking-[0.16em] text-amber-700">
