@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, limit, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore";
-import type { HazardType, HealthRisk, Incident, IncidentEvidence, IncidentStatus, Severity, Source } from "@/lib/types";
+import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
+import type { Incident, Source } from "@/lib/types";
 import {
-  buildIncidentEvidence,
   commandIncidents,
   commandStats,
   formatStatus,
@@ -12,6 +11,8 @@ import {
   getRecommendedAction,
 } from "@/components/command/commandData";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { reportToIncident, type FirestoreReport } from "@/lib/firestoreReports";
+import { buildIncidentEvidence } from "@/lib/incidentEvidence";
 
 const sourceFilters: Array<{ id: Source | "all"; label: string }> = [
   { id: "all", label: "All sources" },
@@ -29,69 +30,8 @@ const markerPositions = [
   "command-marker-six",
 ];
 
-interface FirestoreReport {
-  anonymous?: boolean;
-  aiConfidence?: number;
-  createdAt?: Timestamp;
-  geminiClassification?: {
-    confidence?: number;
-    severity?: Severity;
-    type?: HazardType;
-  };
-  hazardLabel?: string;
-  location?: {
-    label?: string;
-    lat?: string;
-    lng?: string;
-  };
-  note?: string;
-  result?: string;
-  status?: IncidentStatus | "submitted" | "classified";
-  validation?: IncidentEvidence;
-}
-
-function normalizeStatus(status?: FirestoreReport["status"]): IncidentStatus {
-  if (status === "submitted" || status === "classified") return "under_review";
-  return status ?? "under_review";
-}
-
-function getHealthRisk(severity: Severity): HealthRisk {
-  if (severity === "critical") return "high";
-  if (severity === "medium") return "medium";
-  return "low";
-}
-
-function reportToIncident(id: string, report: FirestoreReport): Incident {
-  const severity = report.geminiClassification?.severity ?? "medium";
-  const hazardType = report.geminiClassification?.type ?? "fire";
-  const aiConfidence =
-    report.geminiClassification?.confidence ?? report.aiConfidence ?? 72;
-  const incident: Incident = {
-    id: `firestore-${id}`,
-    aiConfidence,
-    corroboratingReports: report.validation?.citizenSignal.reportCount ?? 1,
-    evidence: report.validation,
-    hazardType,
-    healthRisk: getHealthRisk(severity),
-    isAnonymous: report.anonymous ?? true,
-    latitude: Number(report.location?.lat ?? 28.6264),
-    longitude: Number(report.location?.lng ?? 77.3192),
-    neighborhood: report.location?.label ?? "Citizen report",
-    photoUrl: "",
-    severity,
-    source: "citizen",
-    status: normalizeStatus(report.status),
-    timestamp: report.createdAt?.toDate().toISOString() ?? new Date().toISOString(),
-  };
-
-  return {
-    ...incident,
-    evidence: incident.evidence ?? buildIncidentEvidence(incident),
-  };
-}
-
 export default function CommandCenter() {
-  const [liveIncidents, setLiveIncidents] = useState<Incident[]>([]);
+  const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState(commandIncidents[0]?.id);
   const [source, setSource] = useState<Source | "all">("all");
 
@@ -105,7 +45,7 @@ export default function CommandCenter() {
     );
 
     return onSnapshot(reportsQuery, (snapshot) => {
-      setLiveIncidents(
+      setLiveReports(
         snapshot.docs.map((doc) =>
           reportToIncident(doc.id, doc.data() as FirestoreReport),
         ),
@@ -113,9 +53,19 @@ export default function CommandCenter() {
     });
   }, []);
 
+  const alertTierReports = useMemo(
+    () => liveReports.filter((incident) => incident.evidence?.alertTier),
+    [liveReports],
+  );
+
+  const incomingSignals = useMemo(
+    () => liveReports.filter((incident) => !incident.evidence?.alertTier),
+    [liveReports],
+  );
+
   const incidents = useMemo(
-    () => [...liveIncidents, ...commandIncidents],
-    [liveIncidents],
+    () => [...alertTierReports, ...commandIncidents],
+    [alertTierReports],
   );
 
   const filteredIncidents = useMemo(() => {
@@ -209,6 +159,8 @@ export default function CommandCenter() {
             </button>
           ))}
         </div>
+
+        <IncomingSignals signals={incomingSignals} />
       </aside>
 
       <div className="command-map-panel">
@@ -252,6 +204,33 @@ export default function CommandCenter() {
 
       <IncidentDetail incident={selectedIncident} />
     </section>
+  );
+}
+
+function IncomingSignals({ signals }: { signals: Incident[] }) {
+  return (
+    <div className="incoming-signals-panel">
+      <div>
+        <p>Incoming signals</p>
+        <span>{signals.length} unverified</span>
+      </div>
+
+      {signals.length === 0 ? (
+        <small>No raw citizen reports waiting for corroboration.</small>
+      ) : (
+        <ul>
+          {signals.slice(0, 3).map((signal) => {
+            const evidence = signal.evidence ?? buildIncidentEvidence(signal);
+            return (
+              <li key={signal.id}>
+                <strong>{signal.neighborhood}</strong>
+                <span>{evidence.promotionReason}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 

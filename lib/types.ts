@@ -16,6 +16,7 @@ export type HealthRisk = "low" | "medium" | "high";
 
 export interface IncidentEvidence {
   alertReason: string;
+  alertTier: boolean;
   citizenSignal: {
     reportCount: number;
     windowMinutes: number;
@@ -34,6 +35,7 @@ export interface IncidentEvidence {
     sensorWeight: number;
     satelliteWeight: number;
   };
+  promotionReason: string;
   satellite: {
     source: "Earth Engine";
     signal: string;

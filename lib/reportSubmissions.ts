@@ -50,10 +50,11 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
       type: getHazardType(report.hazardId),
     },
     h3CellId: "883da118d7fffff",
-    validation: {
-      alertReason: lowCoverage
-        ? "Citizen report landed in low station coverage zone; weighting increases citizen corroboration."
-        : "Citizen report matched nearby sensor coverage and satellite context.",
+      validation: {
+        alertReason: lowCoverage
+          ? "Single citizen report in low station coverage zone; waiting for corroboration before municipal alert."
+          : "Single citizen report captured; waiting for corroborating sensor, satellite, or nearby report signals.",
+      alertTier: false,
       citizenSignal: {
         averageConfidence: report.aiConfidence,
         reportCount,
@@ -72,6 +73,7 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
         sensorWeight,
         visualWeight: lowCoverage ? 0.5 : 0.38,
       },
+      promotionReason: "Waiting for corroboration before Command Center escalation.",
       satellite: {
         freshness: satelliteFresh ? "fresh" : "stale",
         lastPassTime: satelliteFresh ? "09:42" : "Yesterday 10:18",
@@ -86,7 +88,7 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
       },
     },
     source: "citizen",
-    status: "under_review",
+    status: "pending",
   });
 
   return {

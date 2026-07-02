@@ -1245,6 +1245,78 @@ a {
   color: #1d4ed8;
 }
 
+.queue-status.pending,
+.queue-status.under_review {
+  background: #f2f6f3;
+  color: var(--muted);
+}
+
+.incoming-signals-panel {
+  border-top: 1px solid var(--line);
+  background: rgba(248, 250, 249, 0.92);
+  padding: 12px;
+}
+
+.incoming-signals-panel > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.incoming-signals-panel p {
+  color: var(--teal-dark);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.incoming-signals-panel > div span {
+  border-radius: 999px;
+  background: #eef2f0;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.incoming-signals-panel small,
+.incoming-signals-panel li span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.incoming-signals-panel > small {
+  margin-top: 8px;
+}
+
+.incoming-signals-panel ul {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.incoming-signals-panel li {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: white;
+  padding: 9px;
+}
+
+.incoming-signals-panel li strong {
+  display: block;
+  margin-bottom: 4px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .command-map {
   position: relative;
   min-height: 548px;

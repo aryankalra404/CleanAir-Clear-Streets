@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { commandIncidents, formatStatus } from "@/components/command/commandData";
 import { CITY_CENTER } from "@/lib/mockData";
+import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { reportToIncident, type FirestoreReport } from "@/lib/firestoreReports";
 import type { Incident, Severity } from "@/lib/types";
 
 declare global {
@@ -17,7 +20,12 @@ type GoogleMapPoint = unknown;
 
 interface GoogleMapMarker {
   addListener: (eventName: string, handler: () => void) => void;
+  setMap: (map: GoogleMapInstance | null) => void;
   setAnimation: (animation: unknown) => void;
+}
+
+interface GoogleMapCircle {
+  setMap: (map: GoogleMapInstance | null) => void;
 }
 
 interface GoogleMapInstance {
@@ -34,7 +42,7 @@ interface GoogleMapsApi {
     Animation: {
       BOUNCE: unknown;
     };
-    Circle: new (options: Record<string, unknown>) => unknown;
+    Circle: new (options: Record<string, unknown>) => GoogleMapCircle;
     ControlPosition: {
       RIGHT_BOTTOM: unknown;
       TOP_RIGHT: unknown;
@@ -123,18 +131,43 @@ export default function GoogleHotspotMap() {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRefs = useRef<Record<string, GoogleMapMarker>>({});
+  const circleRefs = useRef<GoogleMapCircle[]>([]);
   const infoWindowRef = useRef<GoogleMapInfoWindow | null>(null);
+  const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState(commandIncidents[0]?.id);
   const hasApiKey = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">(
     hasApiKey ? "loading" : "error",
   );
 
+  useEffect(() => {
+    if (!isFirebaseConfigured || !db) return;
+
+    const reportsQuery = query(
+      collection(db, "reports"),
+      orderBy("createdAt", "desc"),
+      limit(20),
+    );
+
+    return onSnapshot(reportsQuery, (snapshot) => {
+      setLiveReports(
+        snapshot.docs.map((doc) =>
+          reportToIncident(doc.id, doc.data() as FirestoreReport),
+        ),
+      );
+    });
+  }, []);
+
+  const incidents = useMemo(
+    () => [...liveReports, ...commandIncidents],
+    [liveReports],
+  );
+
   const selectedIncident = useMemo(
     () =>
-      commandIncidents.find((incident) => incident.id === selectedId) ??
-      commandIncidents[0],
-    [selectedId],
+      incidents.find((incident) => incident.id === selectedId) ??
+      incidents[0],
+    [incidents, selectedId],
   );
 
   useEffect(() => {
@@ -172,33 +205,6 @@ export default function GoogleHotspotMap() {
         mapRef.current = map;
         infoWindowRef.current = new maps.InfoWindow();
 
-        commandIncidents.forEach((incident) => {
-          const position = { lat: incident.latitude, lng: incident.longitude };
-          const marker = new maps.Marker({
-            map,
-            position,
-            title: incident.neighborhood,
-            icon: markerIcon(incident),
-            zIndex: incident.severity === "critical" ? 3 : 1,
-          });
-
-          new maps.Circle({
-            center: position,
-            fillColor: severityColor[incident.severity],
-            fillOpacity: incident.severity === "critical" ? 0.16 : 0.1,
-            map,
-            radius: severityRadius[incident.severity],
-            strokeColor: severityColor[incident.severity],
-            strokeOpacity: 0.42,
-            strokeWeight: 1,
-          });
-
-          marker.addListener("click", () => {
-            setSelectedId(incident.id);
-          });
-          markerRefs.current[incident.id] = marker;
-        });
-
         setStatus("ready");
       })
       .catch(() => {
@@ -209,6 +215,44 @@ export default function GoogleHotspotMap() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (status !== "ready" || !mapRef.current || !window.google?.maps) return;
+
+    Object.values(markerRefs.current).forEach((marker) => marker.setMap(null));
+    circleRefs.current.forEach((circle) => circle.setMap(null));
+    markerRefs.current = {};
+    circleRefs.current = [];
+
+    const maps = window.google.maps;
+    incidents.forEach((incident) => {
+      const position = { lat: incident.latitude, lng: incident.longitude };
+      const marker = new maps.Marker({
+        map: mapRef.current,
+        position,
+        title: incident.neighborhood,
+        icon: markerIcon(incident),
+        zIndex: incident.evidence?.alertTier ? 3 : 1,
+      });
+
+      const circle = new maps.Circle({
+        center: position,
+        fillColor: severityColor[incident.severity],
+        fillOpacity: incident.evidence?.alertTier ? 0.16 : 0.06,
+        map: mapRef.current,
+        radius: incident.evidence?.alertTier ? severityRadius[incident.severity] : 1400,
+        strokeColor: severityColor[incident.severity],
+        strokeOpacity: incident.evidence?.alertTier ? 0.42 : 0.22,
+        strokeWeight: 1,
+      });
+
+      marker.addListener("click", () => {
+        setSelectedId(incident.id);
+      });
+      markerRefs.current[incident.id] = marker;
+      circleRefs.current.push(circle);
+    });
+  }, [incidents, status]);
 
   useEffect(() => {
     if (!selectedIncident || !mapRef.current || !window.google?.maps) return;
@@ -246,7 +290,7 @@ export default function GoogleHotspotMap() {
           </p>
         </div>
         <div className="map-status-card">
-          <span>{commandIncidents.length} active</span>
+          <span>{incidents.length} visible</span>
           <strong>Google Maps layer</strong>
         </div>
       </div>
@@ -274,7 +318,7 @@ export default function GoogleHotspotMap() {
             <span>Live</span>
           </div>
           <div className="map-incident-list">
-            {commandIncidents.map((incident) => (
+            {incidents.map((incident) => (
               <button
                 className={
                   incident.id === selectedIncident.id
@@ -290,7 +334,7 @@ export default function GoogleHotspotMap() {
                   <strong>{incident.neighborhood}</strong>
                   <small>
                     {incident.hazardType} · {formatStatus(incident.status)} ·{" "}
-                    {incident.aiConfidence}% confidence
+                    {incident.evidence?.alertTier ? "alert-tier" : "public signal"}
                   </small>
                 </span>
               </button>
