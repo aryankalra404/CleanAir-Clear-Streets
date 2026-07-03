@@ -32,6 +32,7 @@ const markerPositions = [
 
 export default function CommandCenter() {
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
+  const [liveAlertIncidents, setLiveAlertIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState(commandIncidents[0]?.id);
   const [source, setSource] = useState<Source | "all">("all");
 
@@ -53,10 +54,23 @@ export default function CommandCenter() {
     });
   }, []);
 
-  const alertTierReports = useMemo(
-    () => liveReports.filter((incident) => incident.evidence?.alertTier),
-    [liveReports],
-  );
+  useEffect(() => {
+    if (!isFirebaseConfigured || !db) return;
+
+    const incidentsQuery = query(
+      collection(db, "incidents"),
+      orderBy("updatedAt", "desc"),
+      limit(8),
+    );
+
+    return onSnapshot(incidentsQuery, (snapshot) => {
+      setLiveAlertIncidents(
+        snapshot.docs.map((doc) =>
+          reportToIncident(doc.id, doc.data() as FirestoreReport),
+        ),
+      );
+    });
+  }, []);
 
   const incomingSignals = useMemo(
     () => liveReports.filter((incident) => !incident.evidence?.alertTier),
@@ -64,8 +78,8 @@ export default function CommandCenter() {
   );
 
   const incidents = useMemo(
-    () => [...alertTierReports, ...commandIncidents],
-    [alertTierReports],
+    () => [...liveAlertIncidents, ...commandIncidents],
+    [liveAlertIncidents],
   );
 
   const filteredIncidents = useMemo(() => {

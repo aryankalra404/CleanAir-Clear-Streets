@@ -1,4 +1,14 @@
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 
 export interface ReportSubmissionInput {
@@ -6,6 +16,7 @@ export interface ReportSubmissionInput {
   aiConfidence: number;
   hazardId: string;
   hazardLabel: string;
+  photoUrl?: string;
   location: {
     label: string;
     lat: string;
@@ -15,11 +26,141 @@ export interface ReportSubmissionInput {
   result: string;
 }
 
-function getHazardType(hazardId: string) {
+interface StoredReport {
+  aiConfidence?: number;
+  geminiClassification?: {
+    confidence?: number;
+    severity?: string;
+    type?: string;
+  };
+  h3CellId?: string;
+  hazardLabel?: string;
+  location?: {
+    label?: string;
+    lat?: string;
+    lng?: string;
+  };
+  validation?: {
+    alertTier?: boolean;
+  };
+}
+
+const DEFAULT_H3_CELL_ID = "883da118d7fffff";
+const PROMOTION_REPORT_THRESHOLD = 3;
+
+export function getHazardType(hazardId: string) {
   if (hazardId.includes("dust")) return "dust";
   if (hazardId.includes("industrial")) return "industrial";
   if (hazardId.includes("smog")) return "smog";
   return "fire";
+}
+
+export function getSeverity(confidence: number) {
+  if (confidence >= 80) return "critical";
+  if (confidence >= 70) return "medium";
+  return "low";
+}
+
+export async function promoteCellIfThresholdPassed(h3CellId: string) {
+  if (!db) return;
+
+  const reportsQuery = query(
+    collection(db, "reports"),
+    where("h3CellId", "==", h3CellId),
+  );
+  const snapshot = await getDocs(reportsQuery);
+  const clusteredReports = snapshot.docs
+    .map((reportDoc) => ({
+      id: reportDoc.id,
+      ref: reportDoc.ref,
+      data: reportDoc.data() as StoredReport,
+    }))
+    .filter((report) => !report.data.validation?.alertTier && report.data.geminiClassification);
+
+  if (clusteredReports.length < PROMOTION_REPORT_THRESHOLD) return;
+
+  const avgConfidence = Math.round(
+    clusteredReports.reduce(
+      (sum, report) =>
+        sum +
+        (report.data.geminiClassification?.confidence ??
+          report.data.aiConfidence ??
+          72),
+      0,
+    ) / clusteredReports.length,
+  );
+  const primaryReport = clusteredReports[0].data;
+  const promotionReason = `${clusteredReports.length} citizen reports in the same H3 cell crossed the 20 min corroboration threshold.`;
+  const promotedValidation = {
+    alertReason:
+      "Citizen-corroborated hotspot promoted from public signals to municipal review.",
+    alertTier: true,
+    citizenSignal: {
+      averageConfidence: avgConfidence,
+      reportCount: clusteredReports.length,
+      windowMinutes: 20,
+    },
+    coverage: {
+      label: "Low station coverage",
+      level: "low",
+      nearestSensorKm: 3.2,
+    },
+    fusion: {
+      coverageAdjusted: true,
+      finalConfidence: Math.min(98, avgConfidence + 18),
+      h3CellId,
+      satelliteWeight: 0.2,
+      sensorWeight: 0.12,
+      visualWeight: 0.5,
+    },
+    promotionReason,
+    satellite: {
+      freshness: "stale",
+      lastPassTime: "Yesterday 10:18",
+      signal: "Last Sentinel-5P pass not decisive; alert driven by citizen cluster.",
+      source: "Earth Engine",
+    },
+    sensor: {
+      pm25Delta: 8,
+      trend: "rising",
+    },
+  };
+
+  await Promise.all(
+    clusteredReports.map((report) =>
+      updateDoc(report.ref, {
+        status: "under_review",
+        validation: promotedValidation,
+      }),
+    ),
+  );
+
+  await setDoc(
+    doc(db, "incidents", h3CellId),
+    {
+      aiConfidence: avgConfidence,
+      createdAt: serverTimestamp(),
+      geminiClassification: {
+        confidence: avgConfidence,
+        description: "Citizen-corroborated smoke hotspot",
+        severity: getSeverity(avgConfidence),
+        type: primaryReport.geminiClassification?.type ?? "fire",
+      },
+      h3CellId,
+      hazardLabel: primaryReport.hazardLabel ?? "Citizen smoke cluster",
+      linkedReportIds: clusteredReports.map((report) => report.id),
+      location: primaryReport.location ?? {
+        label: "Citizen report cluster",
+        lat: "28.6264",
+        lng: "77.3192",
+      },
+      source: "citizen_cluster",
+      status: "under_review",
+      updatedAt: serverTimestamp(),
+      validation: promotedValidation,
+    },
+    { merge: true },
+  );
 }
 
 export async function submitCitizenReport(report: ReportSubmissionInput) {
@@ -30,34 +171,21 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
     };
   }
 
-  const reportCount = 1;
   const lowCoverage = Number(report.location.lat) > 28.6;
-  const sensorWeight = lowCoverage ? 0.12 : 0.32;
-  const satelliteFresh = report.hazardId.includes("industrial") || report.hazardId.includes("smog");
-  const finalConfidence = Math.min(
-    98,
-    report.aiConfidence + (lowCoverage ? 8 : 3) + (satelliteFresh ? 5 : 1),
-  );
 
   const docRef = await addDoc(collection(db, "reports"), {
     ...report,
-    aiModel: "Gemini multimodal preview",
     createdAt: serverTimestamp(),
-    geminiClassification: {
-      confidence: report.aiConfidence,
-      description: report.result,
-      severity: report.aiConfidence >= 80 ? "critical" : report.aiConfidence >= 70 ? "medium" : "low",
-      type: getHazardType(report.hazardId),
-    },
-    h3CellId: "883da118d7fffff",
-      validation: {
-        alertReason: lowCoverage
-          ? "Single citizen report in low station coverage zone; waiting for corroboration before municipal alert."
-          : "Single citizen report captured; waiting for corroborating sensor, satellite, or nearby report signals.",
+    h3CellId: DEFAULT_H3_CELL_ID,
+    photoUrl: report.photoUrl ?? "",
+    validation: {
+      alertReason: lowCoverage
+        ? "Single citizen report in low station coverage zone; waiting for Gemini classification and corroboration."
+        : "Single citizen report captured; waiting for Gemini classification and corroborating signals.",
       alertTier: false,
       citizenSignal: {
-        averageConfidence: report.aiConfidence,
-        reportCount,
+        averageConfidence: 0,
+        reportCount: 1,
         windowMinutes: 1,
       },
       coverage: {
@@ -67,19 +195,17 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
       },
       fusion: {
         coverageAdjusted: lowCoverage,
-        finalConfidence,
-        h3CellId: "883da118d7fffff",
-        satelliteWeight: satelliteFresh ? 0.32 : 0.2,
-        sensorWeight,
+        finalConfidence: 0,
+        h3CellId: DEFAULT_H3_CELL_ID,
+        satelliteWeight: 0.2,
+        sensorWeight: lowCoverage ? 0.12 : 0.32,
         visualWeight: lowCoverage ? 0.5 : 0.38,
       },
-      promotionReason: "Waiting for corroboration before Command Center escalation.",
+      promotionReason: "Waiting for Gemini classification before corroboration checks.",
       satellite: {
-        freshness: satelliteFresh ? "fresh" : "stale",
-        lastPassTime: satelliteFresh ? "09:42" : "Yesterday 10:18",
-        signal: satelliteFresh
-          ? "Earth Engine anomaly overlaps reported cell"
-          : "Last Sentinel-5P pass not decisive",
+        freshness: "stale",
+        lastPassTime: "Yesterday 10:18",
+        signal: "Satellite context pending.",
         source: "Earth Engine",
       },
       sensor: {
@@ -89,6 +215,14 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
     },
     source: "citizen",
     status: "pending",
+  });
+
+  void fetch("/api/classify-report", {
+    body: JSON.stringify({ reportId: docRef.id }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  }).catch(() => {
+    // The UI already saved the report; backend classification can be retried later.
   });
 
   return {

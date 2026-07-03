@@ -111,8 +111,9 @@ function loadGoogleMaps(apiKey: string) {
 }
 
 function markerIcon(incident: Incident) {
-  const color = severityColor[incident.severity];
-  const label = incident.severity === "critical" ? "!" : incident.severity === "medium" ? "•" : "";
+  const isPending = incident.status === "pending" || incident.status === "classification_failed";
+  const color = isPending ? "#667085" : severityColor[incident.severity];
+  const label = isPending ? "?" : incident.severity === "critical" ? "!" : incident.severity === "medium" ? "•" : "";
 
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
@@ -237,11 +238,17 @@ export default function GoogleHotspotMap() {
 
       const circle = new maps.Circle({
         center: position,
-        fillColor: severityColor[incident.severity],
+        fillColor:
+          incident.status === "pending" || incident.status === "classification_failed"
+            ? "#667085"
+            : severityColor[incident.severity],
         fillOpacity: incident.evidence?.alertTier ? 0.16 : 0.06,
         map: mapRef.current,
         radius: incident.evidence?.alertTier ? severityRadius[incident.severity] : 1400,
-        strokeColor: severityColor[incident.severity],
+        strokeColor:
+          incident.status === "pending" || incident.status === "classification_failed"
+            ? "#667085"
+            : severityColor[incident.severity],
         strokeOpacity: incident.evidence?.alertTier ? 0.42 : 0.22,
         strokeWeight: 1,
       });

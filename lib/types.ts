@@ -5,6 +5,8 @@ export type Severity = "low" | "medium" | "critical";
 export type IncidentStatus =
   | "pending"
   | "under_review"
+  | "classified"
+  | "classification_failed"
   | "verified"
   | "dispatched"
   | "resolved"

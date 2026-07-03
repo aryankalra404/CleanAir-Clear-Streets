@@ -13,10 +13,11 @@ export interface FirestoreReport {
   anonymous?: boolean;
   aiConfidence?: number;
   createdAt?: Timestamp;
+  updatedAt?: Timestamp;
   geminiClassification?: {
     confidence?: number;
-    severity?: Severity;
-    type?: HazardType;
+    severity?: Severity | number;
+    type?: HazardType | "clear" | "haze" | "smoke" | "unclear";
   };
   hazardLabel?: string;
   location?: {
@@ -41,11 +42,41 @@ function getHealthRisk(severity: Severity): HealthRisk {
   return "low";
 }
 
+function normalizeSeverity(severity?: Severity | number): Severity {
+  if (severity === "critical" || severity === "medium" || severity === "low") {
+    return severity;
+  }
+  if (typeof severity === "number") {
+    if (severity >= 4) return "critical";
+    if (severity >= 2) return "medium";
+  }
+  return "low";
+}
+
+function normalizeConfidence(confidence?: number, fallback = 0) {
+  if (typeof confidence !== "number") return fallback;
+  return confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence);
+}
+
+function normalizeHazardType(type?: FirestoreReport["geminiClassification"] extends infer Classification
+  ? Classification extends { type?: infer Type }
+    ? Type
+    : never
+  : never): HazardType {
+  if (type === "dust" || type === "fire" || type === "industrial" || type === "smog") {
+    return type;
+  }
+  if (type === "smoke" || type === "haze") return "smog";
+  return "smog";
+}
+
 export function reportToIncident(id: string, report: FirestoreReport): Incident {
-  const severity = report.geminiClassification?.severity ?? "medium";
-  const hazardType = report.geminiClassification?.type ?? "fire";
-  const aiConfidence =
-    report.geminiClassification?.confidence ?? report.aiConfidence ?? 72;
+  const severity = normalizeSeverity(report.geminiClassification?.severity);
+  const hazardType = normalizeHazardType(report.geminiClassification?.type);
+  const aiConfidence = normalizeConfidence(
+    report.geminiClassification?.confidence,
+    report.aiConfidence ?? 0,
+  );
   const incident: Incident = {
     id: `firestore-${id}`,
     aiConfidence,
@@ -61,7 +92,10 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     severity,
     source: "citizen",
     status: normalizeStatus(report.status),
-    timestamp: report.createdAt?.toDate().toISOString() ?? new Date().toISOString(),
+    timestamp:
+      report.createdAt?.toDate().toISOString() ??
+      report.updatedAt?.toDate().toISOString() ??
+      new Date().toISOString(),
   };
 
   return {

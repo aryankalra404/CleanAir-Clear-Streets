@@ -13,6 +13,7 @@ export default function ReportPortal() {
   const [anonymous, setAnonymous] = useState(true);
   const [location, setLocation] = useState(defaultLocation);
   const [note, setNote] = useState("");
+  const [photoUrl, setPhotoUrl] = useState("");
   const [submissionId, setSubmissionId] = useState("");
   const [storedInFirebase, setStoredInFirebase] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -27,9 +28,31 @@ export default function ReportPortal() {
     setLocation(defaultLocation);
   }
 
+  function handlePhotoChange(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 720_000) {
+      setSubmitError("Choose a smaller demo image under 720 KB until Cloud Storage is enabled.");
+      setPhotoUrl("");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPhotoUrl(typeof reader.result === "string" ? reader.result : "");
+      setSubmitError("");
+    };
+    reader.readAsDataURL(file);
+  }
+
   async function handleSubmit() {
     setSubmitState("submitting");
     setSubmitError("");
+
+    if (!photoUrl) {
+      setSubmitError("Attach a photo before submitting so Gemini can classify the report.");
+      setSubmitState("error");
+      return;
+    }
 
     try {
       const submission = await submitCitizenReport({
@@ -39,6 +62,7 @@ export default function ReportPortal() {
         hazardLabel: selectedHazard.label,
         location,
         note,
+        photoUrl,
         result: selectedHazard.result,
       });
 
@@ -78,10 +102,18 @@ export default function ReportPortal() {
             }}
           >
             <div className="upload-zone">
-              <input id="pollution-photo" type="file" accept="image/*" capture="environment" />
+              <input
+                id="pollution-photo"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => handlePhotoChange(event.target.files?.[0])}
+              />
               <label htmlFor="pollution-photo">
                 <span>Upload photo</span>
-                <strong>Open camera or choose image</strong>
+                <strong>
+                  {photoUrl ? "Photo attached for Gemini screening" : "Open camera or choose image"}
+                </strong>
                 <small>Smoke, dust, flame, or visible haze works best.</small>
               </label>
             </div>
