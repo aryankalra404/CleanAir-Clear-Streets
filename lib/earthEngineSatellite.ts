@@ -8,14 +8,23 @@ import { getDemoH3CellId } from "@/lib/reportSubmissions";
 const EE_KEY_PATH = path.join(process.cwd(), "credentials", "earth-engine-key.json");
 const NO2_COLLECTION = "COPERNICUS/S5P/OFFL/L3_NO2";
 const NO2_BAND = "tropospheric_NO2_column_number_density";
+const AEROSOL_COLLECTION = "COPERNICUS/S5P/OFFL/L3_AER_AI";
+const AEROSOL_BAND = "absorbing_aerosol_index";
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20_000;
+const CURRENT_WINDOW_DAYS = 30;
+const BASELINE_WINDOW_DAYS = 120;
+const SAMPLE_BUFFER_METERS = 1500;
 
-// Typical urban Sentinel-5P tropospheric NO2 columns often sit around
-// 0.00002-0.00025 mol/m^2. Values above the high bound are treated as a
-// strong anomaly for this demo fusion score.
-const URBAN_NO2_MIN = 0.00002;
-const URBAN_NO2_MAX = 0.00025;
+// Scores compare the current 30-day median to the same point's previous
+// 120-day median. NO2 reaches 1.0 at about +150% over local baseline; Aerosol
+// Index reaches 1.0 at about +1.5 positive AI units over local baseline.
+// Negative AI is intentionally treated as clean/no absorbing-aerosol signal.
+const NO2_FULL_ANOMALY_RATIO = 1.5;
+const NO2_BASELINE_FLOOR = 0.00002;
+const NO2_CHRONIC_HIGH = 0.00016;
+const AEROSOL_FULL_ANOMALY_DELTA = 1.5;
+const AEROSOL_CHRONIC_HIGH = 1.6;
 
 type EarthEngineKey = {
   client_email?: string;
@@ -26,6 +35,22 @@ type EarthEngineKey = {
 export type SatelliteDataResult = {
   rawValue: number | null;
   anomalyScore: number;
+  no2: {
+    baselineValue: number | null;
+    rawValue: number | null;
+    anomalyScore: number;
+    chronicScore: number;
+  };
+  aerosolIndex: {
+    baselineValue: number | null;
+    rawValue: number | null;
+    anomalyScore: number;
+    chronicScore: number;
+  };
+  hazardWeights: {
+    fireDustSmoke: number;
+    industrialTraffic: number;
+  };
   source: "Earth Engine / Sentinel-5P";
   timestamp: string;
   cached: boolean;
@@ -49,9 +74,36 @@ function getCacheKey(lat: number, lng: number) {
   });
 }
 
-function normalizeNo2Anomaly(rawValue: number) {
-  const normalized = (rawValue - URBAN_NO2_MIN) / (URBAN_NO2_MAX - URBAN_NO2_MIN);
-  return Math.max(0, Math.min(1, Number(normalized.toFixed(3))));
+function clampScore(value: number) {
+  return Math.max(0, Math.min(1, Number(value.toFixed(3))));
+}
+
+function normalizeNo2Anomaly(rawValue: number | null, baselineValue: number | null) {
+  if (rawValue === null || baselineValue === null) return 0;
+  const denominator = Math.max(Math.abs(baselineValue), NO2_BASELINE_FLOOR);
+  return clampScore((rawValue - baselineValue) / denominator / NO2_FULL_ANOMALY_RATIO);
+}
+
+function normalizeAerosolIndexAnomaly(
+  rawValue: number | null,
+  baselineValue: number | null,
+) {
+  if (rawValue === null || baselineValue === null) return 0;
+  const positiveCurrent = Math.max(0, rawValue);
+  const positiveBaseline = Math.max(0, baselineValue);
+  return clampScore(
+    (positiveCurrent - positiveBaseline) / AEROSOL_FULL_ANOMALY_DELTA,
+  );
+}
+
+function normalizeNo2ChronicScore(rawValue: number | null) {
+  if (rawValue === null) return 0;
+  return clampScore(rawValue / NO2_CHRONIC_HIGH);
+}
+
+function normalizeAerosolChronicScore(rawValue: number | null) {
+  if (rawValue === null) return 0;
+  return clampScore(Math.max(0, rawValue) / AEROSOL_CHRONIC_HIGH);
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
@@ -123,12 +175,59 @@ function buildFallback(cacheKey: string, error: string): SatelliteDataResult {
   return {
     rawValue: null,
     anomalyScore: 0,
+    no2: {
+      baselineValue: null,
+      rawValue: null,
+      anomalyScore: 0,
+      chronicScore: 0,
+    },
+    aerosolIndex: {
+      baselineValue: null,
+      rawValue: null,
+      anomalyScore: 0,
+      chronicScore: 0,
+    },
+    hazardWeights: {
+      fireDustSmoke: 0,
+      industrialTraffic: 0,
+    },
     source: "Earth Engine / Sentinel-5P",
     timestamp: new Date().toISOString(),
     cached: false,
     cacheKey,
     error,
   };
+}
+
+async function reduceMedianBand(
+  collectionId: string,
+  band: string,
+  region: unknown,
+  startDate: string,
+  endDate: string,
+  label: string,
+) {
+  const composite = ee
+    .ImageCollection(collectionId)
+    .select(band)
+    .filterDate(startDate, endDate)
+    .filterBounds(region)
+    .median();
+
+  const reduction = composite.reduceRegion({
+    reducer: ee.ApiFunction._call("Reducer.mean"),
+    geometry: region,
+    scale: 1113,
+    maxPixels: 1e9,
+  });
+
+  const raw = await withTimeout(
+    getInfo<number | null>(reduction.get(band)),
+    REQUEST_TIMEOUT_MS,
+    `Earth Engine ${label} reduction`,
+  );
+
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
 export async function getSatelliteDataForPoint(
@@ -149,37 +248,87 @@ export async function getSatelliteDataForPoint(
     await withTimeout(ensureEarthEngineReady(), REQUEST_TIMEOUT_MS, "Earth Engine auth");
 
     const end = new Date();
-    const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const startDate = start.toISOString().slice(0, 10);
+    const currentStart = new Date(
+      end.getTime() - CURRENT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const baselineStart = new Date(
+      currentStart.getTime() - BASELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const currentStartDate = currentStart.toISOString().slice(0, 10);
+    const baselineStartDate = baselineStart.toISOString().slice(0, 10);
     const endDate = end.toISOString().slice(0, 10);
 
-    const region = ee.Geometry.Point([lng, lat]).buffer(5000);
-    const composite = ee
-      .ImageCollection(NO2_COLLECTION)
-      .select(NO2_BAND)
-      .filterDate(startDate, endDate)
-      .filterBounds(region)
-      .median();
+    const region = ee.Geometry.Point([lng, lat]).buffer(SAMPLE_BUFFER_METERS);
+    const [no2Raw, no2Baseline, aerosolRaw, aerosolBaseline] = await Promise.all([
+      reduceMedianBand(
+        NO2_COLLECTION,
+        NO2_BAND,
+        region,
+        currentStartDate,
+        endDate,
+        "NO2 current",
+      ),
+      reduceMedianBand(
+        NO2_COLLECTION,
+        NO2_BAND,
+        region,
+        baselineStartDate,
+        currentStartDate,
+        "NO2 baseline",
+      ),
+      reduceMedianBand(
+        AEROSOL_COLLECTION,
+        AEROSOL_BAND,
+        region,
+        currentStartDate,
+        endDate,
+        "Aerosol Index current",
+      ),
+      reduceMedianBand(
+        AEROSOL_COLLECTION,
+        AEROSOL_BAND,
+        region,
+        baselineStartDate,
+        currentStartDate,
+        "Aerosol Index baseline",
+      ),
+    ]);
 
-    const reduction = composite.reduceRegion({
-      reducer: ee.ApiFunction._call("Reducer.mean"),
-      geometry: region,
-      scale: 1113,
-      maxPixels: 1e9,
-    });
-    const raw = await withTimeout(
-      getInfo<number | null>(reduction.get(NO2_BAND)),
-      REQUEST_TIMEOUT_MS,
-      "Earth Engine NO2 reduction",
-    );
-
-    if (typeof raw !== "number" || !Number.isFinite(raw)) {
-      throw new Error("Earth Engine returned no unmasked NO2 value for this area.");
+    if (no2Raw === null && aerosolRaw === null) {
+      throw new Error(
+        "Earth Engine returned no unmasked NO2 or Aerosol Index value for this area.",
+      );
     }
 
+    const no2Anomaly = normalizeNo2Anomaly(no2Raw, no2Baseline);
+    const aerosolAnomaly = normalizeAerosolIndexAnomaly(
+      aerosolRaw,
+      aerosolBaseline,
+    );
+    const no2Chronic = normalizeNo2ChronicScore(no2Raw);
+    const aerosolChronic = normalizeAerosolChronicScore(aerosolRaw);
+    const industrialTrafficWeight = Math.max(no2Anomaly, no2Chronic);
+    const fireDustSmokeWeight = Math.max(aerosolAnomaly, aerosolChronic);
+    const anomalyScore = Math.max(industrialTrafficWeight, fireDustSmokeWeight);
     const value: SatelliteDataResult = {
-      rawValue: raw,
-      anomalyScore: normalizeNo2Anomaly(raw),
+      rawValue: no2Raw,
+      anomalyScore,
+      no2: {
+        baselineValue: no2Baseline,
+        rawValue: no2Raw,
+        anomalyScore: no2Anomaly,
+        chronicScore: no2Chronic,
+      },
+      aerosolIndex: {
+        baselineValue: aerosolBaseline,
+        rawValue: aerosolRaw,
+        anomalyScore: aerosolAnomaly,
+        chronicScore: aerosolChronic,
+      },
+      hazardWeights: {
+        fireDustSmoke: fireDustSmokeWeight,
+        industrialTraffic: industrialTrafficWeight,
+      },
       source: "Earth Engine / Sentinel-5P",
       timestamp: new Date().toISOString(),
       cached: false,

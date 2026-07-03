@@ -34,6 +34,8 @@ interface GeminiResponse {
 }
 
 interface ReportDoc {
+  hazardId?: string;
+  hazardLabel?: string;
   h3CellId?: string;
   location?: {
     lat?: string;
@@ -61,6 +63,34 @@ function getPostClassificationReason(classification: GeminiClassification) {
   }
 
   return "Gemini classified a pollution signal; waiting for citizen, sensor, or satellite corroboration.";
+}
+
+function getSatelliteHazardChannel(
+  classification: GeminiClassification,
+  report: ReportDoc,
+) {
+  const hazardText = `${report.hazardId ?? ""} ${report.hazardLabel ?? ""}`.toLowerCase();
+  if (
+    hazardText.includes("industrial") ||
+    hazardText.includes("traffic") ||
+    classification.type === "clear"
+  ) {
+    return "industrialTraffic";
+  }
+
+  if (
+    hazardText.includes("dust") ||
+    hazardText.includes("fire") ||
+    hazardText.includes("smog") ||
+    classification.type === "dust" ||
+    classification.type === "fire" ||
+    classification.type === "haze" ||
+    classification.type === "smoke"
+  ) {
+    return "fireDustSmoke";
+  }
+
+  return "balanced";
 }
 
 function sleep(ms: number) {
@@ -220,7 +250,15 @@ export async function POST(request: Request) {
       Number.isFinite(lat) && Number.isFinite(lng)
         ? await getSatelliteDataForPoint(lat, lng)
         : null;
-    const satelliteAnomaly = satelliteData?.anomalyScore ?? 0;
+    const satelliteChannel = satelliteData
+      ? getSatelliteHazardChannel(classification, report)
+      : "balanced";
+    const satelliteAnomaly =
+      satelliteChannel === "industrialTraffic"
+        ? (satelliteData?.hazardWeights.industrialTraffic ?? 0)
+        : satelliteChannel === "fireDustSmoke"
+          ? (satelliteData?.hazardWeights.fireDustSmoke ?? 0)
+          : (satelliteData?.anomalyScore ?? 0);
     const satelliteBoost = Math.round(satelliteAnomaly * 12);
     const finalConfidence = Math.min(
       98,
@@ -254,11 +292,20 @@ export async function POST(request: Request) {
           ? "Gemini classified report; waiting for corroboration threshold."
           : "Not promotion eligible until another source shows a pollution signal.",
         satellite: {
-          freshness: satelliteData?.rawValue ? "fresh" : "stale",
+          aerosolIndexAnomaly: satelliteData?.aerosolIndex.anomalyScore ?? 0,
+          aerosolIndexRaw: satelliteData?.aerosolIndex.rawValue ?? null,
+          fireDustSmokeWeight: satelliteData?.hazardWeights.fireDustSmoke ?? 0,
+          freshness:
+            satelliteData?.no2.rawValue || satelliteData?.aerosolIndex.rawValue
+              ? "fresh"
+              : "stale",
+          industrialTrafficWeight: satelliteData?.hazardWeights.industrialTraffic ?? 0,
           lastPassTime: satelliteData?.timestamp ?? new Date().toISOString(),
-          rawNo2: satelliteData?.rawValue ?? null,
-          signal: satelliteData?.rawValue
-            ? `Sentinel-5P NO2 anomaly score ${satelliteData.anomalyScore}`
+          no2Anomaly: satelliteData?.no2.anomalyScore ?? 0,
+          rawNo2: satelliteData?.no2.rawValue ?? null,
+          selectedChannel: satelliteChannel,
+          signal: satelliteData && !satelliteData.error
+            ? `Sentinel-5P ${satelliteChannel} score ${satelliteAnomaly}; NO2 ${satelliteData.no2.anomalyScore}, aerosol ${satelliteData.aerosolIndex.anomalyScore}`
             : (satelliteData?.error ?? "Satellite anomaly unavailable."),
           source: satelliteData?.source ?? "Earth Engine / Sentinel-5P",
         },
