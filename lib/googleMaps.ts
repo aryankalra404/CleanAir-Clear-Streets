@@ -82,11 +82,12 @@ export interface GoogleMapsApi {
       ) => GooglePlaceAutocomplete;
     };
     Size: new (width: number, height: number) => GoogleMapSize;
+    importLibrary?: (name: string) => Promise<unknown>;
   };
 }
 
 type GoogleMapsWindow = Window & {
-  cleanAirGoogleMapsPromise?: Promise<void>;
+  cleanAirGoogleMapsPromises?: Partial<Record<string, Promise<void>>>;
   google?: GoogleMapsApi;
 };
 
@@ -98,18 +99,29 @@ export function getGoogleMaps() {
   return getGoogleMapsWindow().google;
 }
 
-export function loadGoogleMaps(apiKey: string) {
+export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {}) {
   const mapsWindow = getGoogleMapsWindow();
-  if (mapsWindow.google?.maps?.places) return Promise.resolve();
-  if (mapsWindow.cleanAirGoogleMapsPromise) return mapsWindow.cleanAirGoogleMapsPromise;
+  const needsPlaces = options.places ?? false;
+  if (mapsWindow.google?.maps && (!needsPlaces || mapsWindow.google.maps.places)) {
+    return Promise.resolve();
+  }
+  if (mapsWindow.google?.maps?.importLibrary && needsPlaces) {
+    return mapsWindow.google.maps.importLibrary("places").then(() => undefined);
+  }
 
-  mapsWindow.cleanAirGoogleMapsPromise = new Promise((resolve, reject) => {
+  const promiseKey = needsPlaces ? "places" : "core";
+  mapsWindow.cleanAirGoogleMapsPromises ??= {};
+  if (mapsWindow.cleanAirGoogleMapsPromises[promiseKey]) {
+    return mapsWindow.cleanAirGoogleMapsPromises[promiseKey];
+  }
+
+  mapsWindow.cleanAirGoogleMapsPromises[promiseKey] = new Promise((resolve, reject) => {
     const script = document.createElement("script");
     const params = new URLSearchParams({
       key: apiKey,
-      libraries: "places",
       v: "weekly",
     });
+    if (needsPlaces) params.set("libraries", "places");
     script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
     script.async = true;
     script.defer = true;
@@ -118,5 +130,5 @@ export function loadGoogleMaps(apiKey: string) {
     document.head.appendChild(script);
   });
 
-  return mapsWindow.cleanAirGoogleMapsPromise;
+  return mapsWindow.cleanAirGoogleMapsPromises[promiseKey];
 }

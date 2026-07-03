@@ -23,7 +23,7 @@ import type { Incident, Severity } from "@/lib/types";
 declare global {
   interface Window {
     google?: GoogleMapsApi;
-    cleanAirGoogleMapsPromise?: Promise<void>;
+    cleanAirGoogleMapsPromises?: Partial<Record<string, Promise<void>>>;
   }
 }
 

@@ -98,6 +98,7 @@ export default function ReportPortal() {
   const [location, setLocation] = useState(defaultLocation);
   const [note, setNote] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState("");
   const [isPreparingPhoto, setIsPreparingPhoto] = useState(false);
   const [submissionId, setSubmissionId] = useState("");
   const [storedInFirebase, setStoredInFirebase] = useState(false);
@@ -150,10 +151,12 @@ export default function ReportPortal() {
     if (!file) return;
     setSubmitError("");
     setPhotoUrl("");
+    setPhotoPreviewUrl("");
     setIsPreparingPhoto(true);
 
     try {
       const compressedPhoto = await compressPhotoForUpload(file);
+      setPhotoPreviewUrl(compressedPhoto);
       const uploadedPhotoUrl = await uploadPhotoToImgBB(compressedPhoto, file.name);
       setPhotoUrl(uploadedPhotoUrl);
       setSubmitError("");
@@ -164,6 +167,13 @@ export default function ReportPortal() {
     } finally {
       setIsPreparingPhoto(false);
     }
+  }
+
+  function handleRemovePhoto() {
+    setPhotoUrl("");
+    setPhotoPreviewUrl("");
+    setSubmitError("");
+    setSubmitState("idle");
   }
 
   async function handleSubmit() {
@@ -230,7 +240,7 @@ export default function ReportPortal() {
               handleSubmit();
             }}
           >
-            <div className="upload-zone">
+            <div className={photoPreviewUrl ? "upload-zone has-photo" : "upload-zone"}>
               <input
                 id="pollution-photo"
                 type="file"
@@ -238,17 +248,37 @@ export default function ReportPortal() {
                 capture="environment"
                 onChange={(event) => handlePhotoChange(event.target.files?.[0])}
               />
-              <label htmlFor="pollution-photo">
-                <span>Upload photo</span>
-                <strong>
-                  {isPreparingPhoto
-                    ? "Uploading photo for Gemini screening"
-                    : photoUrl
-                      ? "Photo attached for Gemini screening"
+              {!photoPreviewUrl ? (
+                <label htmlFor="pollution-photo">
+                  <span>Upload photo</span>
+                  <strong>
+                    {isPreparingPhoto
+                      ? "Uploading photo for Gemini screening"
                       : "Open camera or choose image"}
-                </strong>
-                <small>Smoke, dust, flame, or visible haze works best.</small>
-              </label>
+                  </strong>
+                  <small>Smoke, dust, flame, or visible haze works best.</small>
+                </label>
+              ) : (
+                <div className="uploaded-evidence-card">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- Local data URL preview before the image is hosted. */}
+                  <img alt="Uploaded pollution report evidence" src={photoPreviewUrl} />
+                  <div className="uploaded-evidence-copy">
+                    <span>{photoUrl ? "Photo uploaded" : "Uploading photo"}</span>
+                    <strong>
+                      {photoUrl
+                        ? "Ready for Gemini screening"
+                        : "Securing evidence image"}
+                    </strong>
+                    <small>Stored as a hosted URL before the report is saved.</small>
+                    <div className="uploaded-evidence-actions">
+                      <label htmlFor="pollution-photo">Change photo</label>
+                      <button onClick={handleRemovePhoto} type="button">
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <fieldset className="tag-fieldset">

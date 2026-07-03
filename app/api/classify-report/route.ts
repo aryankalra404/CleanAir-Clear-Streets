@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { promoteCellIfThresholdPassed } from "@/lib/reportSubmissions";
 
@@ -34,6 +35,10 @@ interface GeminiResponse {
 
 interface ReportDoc {
   h3CellId?: string;
+  location?: {
+    lat?: string;
+    lng?: string;
+  };
   photoUrl?: string;
   validation?: Record<string, unknown>;
 }
@@ -209,6 +214,20 @@ export async function POST(request: Request) {
     const classification = await callGeminiWithRetry(inlineData);
     const h3CellId = report.h3CellId ?? "883da118d7fffff";
     const pollutionSignalConfidence = getPollutionSignalConfidence(classification);
+    const lat = Number(report.location?.lat);
+    const lng = Number(report.location?.lng);
+    const satelliteData =
+      Number.isFinite(lat) && Number.isFinite(lng)
+        ? await getSatelliteDataForPoint(lat, lng)
+        : null;
+    const satelliteAnomaly = satelliteData?.anomalyScore ?? 0;
+    const satelliteBoost = Math.round(satelliteAnomaly * 12);
+    const finalConfidence = Math.min(
+      98,
+      pollutionSignalConfidence > 0
+        ? pollutionSignalConfidence + satelliteBoost
+        : satelliteBoost,
+    );
 
     await updateDoc(reportRef, {
       aiModel: GEMINI_MODEL,
@@ -225,7 +244,7 @@ export async function POST(request: Request) {
         },
         fusion: {
           coverageAdjusted: true,
-          finalConfidence: pollutionSignalConfidence,
+          finalConfidence,
           h3CellId,
           satelliteWeight: 0.2,
           sensorWeight: 0.12,
@@ -234,6 +253,15 @@ export async function POST(request: Request) {
         promotionReason: isPollutionClassification(classification)
           ? "Gemini classified report; waiting for corroboration threshold."
           : "Not promotion eligible until another source shows a pollution signal.",
+        satellite: {
+          freshness: satelliteData?.rawValue ? "fresh" : "stale",
+          lastPassTime: satelliteData?.timestamp ?? new Date().toISOString(),
+          rawNo2: satelliteData?.rawValue ?? null,
+          signal: satelliteData?.rawValue
+            ? `Sentinel-5P NO2 anomaly score ${satelliteData.anomalyScore}`
+            : (satelliteData?.error ?? "Satellite anomaly unavailable."),
+          source: satelliteData?.source ?? "Earth Engine / Sentinel-5P",
+        },
       },
     });
 

@@ -94,8 +94,9 @@ export default function ReportLocationPicker({
   const autocompleteRef = useRef<GooglePlaceAutocomplete | null>(null);
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
+  const [mapEnabled, setMapEnabled] = useState(false);
   const [status, setStatus] = useState<PickerStatus>("idle");
-  const [helperText, setHelperText] = useState("Search a place, detect GPS, or drag the pin.");
+  const [helperText, setHelperText] = useState("Use GPS, enter details manually, or open the map picker.");
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -157,6 +158,10 @@ export default function ReportLocationPicker({
   }
 
   useEffect(() => {
+    if (!mapEnabled) {
+      return;
+    }
+
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
     if (!apiKey || !mapNodeRef.current || !inputRef.current) {
       setStatus(apiKey ? "idle" : "error");
@@ -166,7 +171,7 @@ export default function ReportLocationPicker({
     let cancelled = false;
     setStatus("loading");
 
-    loadGoogleMaps(apiKey)
+    loadGoogleMaps(apiKey, { places: true })
       .then(() => {
         if (cancelled || !mapNodeRef.current || !inputRef.current) return;
 
@@ -250,7 +255,7 @@ export default function ReportLocationPicker({
         markerRef.current.setMap(null);
       }
     };
-  }, [commitLocation, commitLocationWithReverseGeocode]);
+  }, [commitLocation, commitLocationWithReverseGeocode, mapEnabled]);
 
   useEffect(() => {
     if (inputRef.current && inputRef.current.value !== value.label) {
@@ -262,9 +267,18 @@ export default function ReportLocationPicker({
     <div className="location-picker-card">
       <div className="location-picker-row">
         <label htmlFor="report-location">Location</label>
-        <button type="button" onClick={handleDetectLocation}>
-          Detect my location
-        </button>
+        <div className="location-picker-actions">
+          <button type="button" onClick={handleDetectLocation}>
+            Detect my location
+          </button>
+          <button
+            aria-pressed={mapEnabled}
+            type="button"
+            onClick={() => setMapEnabled(true)}
+          >
+            Use map picker
+          </button>
+        </div>
       </div>
 
       <input
@@ -280,19 +294,21 @@ export default function ReportLocationPicker({
         ref={inputRef}
       />
 
-      <div className="location-picker-map">
-        <div className="location-picker-canvas" ref={mapNodeRef} />
-        {status !== "ready" && (
-          <div className="location-picker-state">
-            <strong>{status === "error" ? "Map unavailable" : "Loading map picker"}</strong>
-            <span>
-              {status === "error"
-                ? "Location can still be set after the API key is fixed."
-                : "Preparing draggable report pin."}
-            </span>
-          </div>
-        )}
-      </div>
+      {mapEnabled && (
+        <div className="location-picker-map">
+          <div className="location-picker-canvas" ref={mapNodeRef} />
+          {status !== "ready" && (
+            <div className="location-picker-state">
+              <strong>{status === "error" ? "Map unavailable" : "Loading map picker"}</strong>
+              <span>
+                {status === "error"
+                  ? "Location can still be set after the API key is fixed."
+                  : "Preparing draggable report pin."}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="location-picker-meta">
         <small>{helperText}</small>
