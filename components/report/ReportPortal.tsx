@@ -19,7 +19,7 @@ type ClassificationFeedback =
   | null;
 
 const MAX_SOURCE_IMAGE_BYTES = 6_000_000;
-const MAX_STORED_IMAGE_CHARS = 620_000;
+const MAX_UPLOAD_IMAGE_CHARS = 620_000;
 const COMPRESSED_IMAGE_MAX_EDGE = 960;
 
 function loadImage(dataUrl: string) {
@@ -46,7 +46,7 @@ async function fileToDataUrl(file: File) {
   });
 }
 
-async function compressPhotoForFirestore(file: File) {
+async function compressPhotoForUpload(file: File) {
   if (file.size > MAX_SOURCE_IMAGE_BYTES) {
     throw new Error("Choose a photo under 6 MB for the demo upload.");
   }
@@ -68,10 +68,28 @@ async function compressPhotoForFirestore(file: File) {
   const qualityLevels = [0.72, 0.62, 0.52, 0.42];
   for (const quality of qualityLevels) {
     const compressed = canvas.toDataURL("image/jpeg", quality);
-    if (compressed.length <= MAX_STORED_IMAGE_CHARS) return compressed;
+    if (compressed.length <= MAX_UPLOAD_IMAGE_CHARS) return compressed;
   }
 
-  throw new Error("Choose a simpler or smaller image so the demo can store it safely.");
+  throw new Error("Choose a simpler or smaller image so it can upload safely.");
+}
+
+async function uploadPhotoToImgBB(dataUrl: string, fileName: string) {
+  const response = await fetch("/api/upload-image", {
+    body: JSON.stringify({
+      image: dataUrl,
+      name: `cleanair-${Date.now()}-${fileName.replace(/\.[^.]+$/, "")}`,
+    }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const payload = (await response.json()) as { error?: string; imageUrl?: string };
+
+  if (!response.ok || !payload.imageUrl) {
+    throw new Error(payload.error ?? "Could not upload photo.");
+  }
+
+  return payload.imageUrl;
 }
 
 export default function ReportPortal() {
@@ -135,8 +153,9 @@ export default function ReportPortal() {
     setIsPreparingPhoto(true);
 
     try {
-      const compressedPhoto = await compressPhotoForFirestore(file);
-      setPhotoUrl(compressedPhoto);
+      const compressedPhoto = await compressPhotoForUpload(file);
+      const uploadedPhotoUrl = await uploadPhotoToImgBB(compressedPhoto, file.name);
+      setPhotoUrl(uploadedPhotoUrl);
       setSubmitError("");
       setSubmitState("idle");
     } catch (error) {
@@ -223,7 +242,7 @@ export default function ReportPortal() {
                 <span>Upload photo</span>
                 <strong>
                   {isPreparingPhoto
-                    ? "Preparing photo for Gemini screening"
+                    ? "Uploading photo for Gemini screening"
                     : photoUrl
                       ? "Photo attached for Gemini screening"
                       : "Open camera or choose image"}
@@ -276,7 +295,7 @@ export default function ReportPortal() {
               type="submit"
             >
               {isPreparingPhoto
-                ? "Preparing photo..."
+                ? "Uploading photo..."
                 : submitState === "submitting"
                   ? "Submitting..."
                   : "Submit Report"}
