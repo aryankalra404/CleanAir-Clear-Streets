@@ -1,12 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { doc, onSnapshot } from "firebase/firestore";
 import Link from "next/link";
 import { defaultLocation, hazardTags } from "@/components/report/reportData";
 import Navbar from "@/components/shared/Navbar";
+import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { hasPollutionSignal, type FirestoreReport } from "@/lib/firestoreReports";
 import { submitCitizenReport } from "@/lib/reportSubmissions";
 
 type SubmitState = "idle" | "submitting" | "submitted" | "error";
+type ClassificationFeedback =
+  | {
+      tone: "accepted" | "neutral" | "error";
+      message: string;
+    }
+  | null;
 
 const MAX_SOURCE_IMAGE_BYTES = 6_000_000;
 const MAX_STORED_IMAGE_CHARS = 620_000;
@@ -74,6 +83,8 @@ export default function ReportPortal() {
   const [submissionId, setSubmissionId] = useState("");
   const [storedInFirebase, setStoredInFirebase] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [classificationFeedback, setClassificationFeedback] =
+    useState<ClassificationFeedback>(null);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
 
   const selectedHazard = useMemo(
@@ -84,6 +95,41 @@ export default function ReportPortal() {
   function handleLocationClick() {
     setLocation(defaultLocation);
   }
+
+  useEffect(() => {
+    if (!submissionId || !storedInFirebase || !isFirebaseConfigured || !db) return;
+
+    return onSnapshot(doc(db, "reports", submissionId), (snapshot) => {
+      if (!snapshot.exists()) return;
+
+      const report = snapshot.data() as FirestoreReport;
+      if (report.status === "classification_failed") {
+        setClassificationFeedback({
+          message:
+            "Report saved, but Gemini could not classify this photo. It stays hidden until reviewed or retried.",
+          tone: "error",
+        });
+        return;
+      }
+
+      if (report.status !== "classified" || !report.geminiClassification) return;
+
+      if (hasPollutionSignal(report)) {
+        setClassificationFeedback({
+          message:
+            "Pollution signal detected. Your report can appear on the public map while it waits for corroboration.",
+          tone: "accepted",
+        });
+        return;
+      }
+
+      setClassificationFeedback({
+        message:
+          "No pollution signal detected in this photo. The report is saved for audit, but it will not appear on the public map.",
+        tone: "neutral",
+      });
+    });
+  }, [storedInFirebase, submissionId]);
 
   async function handlePhotoChange(file: File | undefined) {
     if (!file) return;
@@ -107,6 +153,7 @@ export default function ReportPortal() {
   async function handleSubmit() {
     setSubmitState("submitting");
     setSubmitError("");
+    setClassificationFeedback(null);
 
     if (isPreparingPhoto) {
       setSubmitError("Photo is still preparing. Try again in a moment.");
@@ -307,6 +354,11 @@ export default function ReportPortal() {
                   queue after validation.
                 </p>
                 {submissionId && <small>Submission ID: {submissionId}</small>}
+                {classificationFeedback && (
+                  <small className={`classification-feedback ${classificationFeedback.tone}`}>
+                    {classificationFeedback.message}
+                  </small>
+                )}
                 <Link href="/map">See nearby hotspots</Link>
               </div>
             )}

@@ -58,7 +58,7 @@ function normalizeConfidence(confidence?: number, fallback = 0) {
   return confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence);
 }
 
-function hasPollutionSignal(report: FirestoreReport) {
+export function hasPollutionSignal(report: FirestoreReport) {
   const classification = report.geminiClassification;
   return (
     classification?.severity !== 0 &&

@@ -5,7 +5,11 @@ import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestor
 import { commandIncidents, formatStatus } from "@/components/command/commandData";
 import { CITY_CENTER } from "@/lib/mockData";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { reportToIncident, type FirestoreReport } from "@/lib/firestoreReports";
+import {
+  hasPollutionSignal,
+  reportToIncident,
+  type FirestoreReport,
+} from "@/lib/firestoreReports";
 import type { Incident, Severity } from "@/lib/types";
 
 declare global {
@@ -152,9 +156,13 @@ export default function GoogleHotspotMap() {
 
     return onSnapshot(reportsQuery, (snapshot) => {
       setLiveReports(
-        snapshot.docs.map((doc) =>
-          reportToIncident(doc.id, doc.data() as FirestoreReport),
-        ),
+        snapshot.docs
+          .map((reportDoc) => ({
+            data: reportDoc.data() as FirestoreReport,
+            id: reportDoc.id,
+          }))
+          .filter((report) => hasPollutionSignal(report.data))
+          .map((report) => reportToIncident(report.id, report.data)),
       );
     });
   }, []);

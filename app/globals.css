@@ -2040,6 +2040,28 @@ a {
   word-break: break-all;
 }
 
+.submission-card .classification-feedback {
+  border-radius: 8px;
+  line-height: 1.45;
+  padding: 9px 10px;
+  word-break: normal;
+}
+
+.classification-feedback.accepted {
+  background: rgba(20, 184, 166, 0.12);
+  color: var(--teal-dark);
+}
+
+.classification-feedback.neutral {
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--muted);
+}
+
+.classification-feedback.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--red);
+}
+
 .submission-card a {
   display: inline-flex;
   margin-top: 14px;

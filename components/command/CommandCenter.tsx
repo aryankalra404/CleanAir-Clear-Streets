@@ -11,7 +11,11 @@ import {
   getRecommendedAction,
 } from "@/components/command/commandData";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { reportToIncident, type FirestoreReport } from "@/lib/firestoreReports";
+import {
+  hasPollutionSignal,
+  reportToIncident,
+  type FirestoreReport,
+} from "@/lib/firestoreReports";
 import { buildIncidentEvidence } from "@/lib/incidentEvidence";
 
 const sourceFilters: Array<{ id: Source | "all"; label: string }> = [
@@ -47,9 +51,13 @@ export default function CommandCenter() {
 
     return onSnapshot(reportsQuery, (snapshot) => {
       setLiveReports(
-        snapshot.docs.map((doc) =>
-          reportToIncident(doc.id, doc.data() as FirestoreReport),
-        ),
+        snapshot.docs
+          .map((reportDoc) => ({
+            data: reportDoc.data() as FirestoreReport,
+            id: reportDoc.id,
+          }))
+          .filter((report) => hasPollutionSignal(report.data))
+          .map((report) => reportToIncident(report.id, report.data)),
       );
     });
   }, []);
