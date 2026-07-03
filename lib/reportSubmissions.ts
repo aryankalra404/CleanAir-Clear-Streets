@@ -48,6 +48,7 @@ interface StoredReport {
 const DEFAULT_H3_CELL_ID = "883da118d7fffff";
 const PROMOTION_REPORT_THRESHOLD = 3;
 const POLLUTION_TYPES = new Set(["dust", "fire", "haze", "smoke"]);
+const DEMO_H3_CELL_DEGREES = 0.025;
 
 export function getHazardType(hazardId: string) {
   if (hazardId.includes("dust")) return "dust";
@@ -60,6 +61,18 @@ export function getSeverity(confidence: number) {
   if (confidence >= 80) return "critical";
   if (confidence >= 70) return "medium";
   return "low";
+}
+
+export function getDemoH3CellId(location: ReportSubmissionInput["location"]) {
+  const lat = Number(location.lat);
+  const lng = Number(location.lng);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return DEFAULT_H3_CELL_ID;
+
+  const latBucket = Math.round(lat / DEMO_H3_CELL_DEGREES);
+  const lngBucket = Math.round(lng / DEMO_H3_CELL_DEGREES);
+
+  return `demo-h3-${latBucket}-${lngBucket}`;
 }
 
 function getPollutionSignalConfidence(report: StoredReport) {
@@ -187,11 +200,12 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
   }
 
   const lowCoverage = Number(report.location.lat) > 28.6;
+  const h3CellId = getDemoH3CellId(report.location);
 
   const docRef = await addDoc(collection(db, "reports"), {
     ...report,
     createdAt: serverTimestamp(),
-    h3CellId: DEFAULT_H3_CELL_ID,
+    h3CellId,
     photoUrl: report.photoUrl ?? "",
     validation: {
       alertReason: lowCoverage
@@ -211,7 +225,7 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
       fusion: {
         coverageAdjusted: lowCoverage,
         finalConfidence: 0,
-        h3CellId: DEFAULT_H3_CELL_ID,
+        h3CellId,
         satelliteWeight: 0.2,
         sensorWeight: lowCoverage ? 0.12 : 0.32,
         visualWeight: lowCoverage ? 0.5 : 0.38,

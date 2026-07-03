@@ -1915,6 +1915,110 @@ a {
   cursor: pointer;
 }
 
+.location-picker-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+}
+
+.location-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.location-picker-row label {
+  color: #344054;
+  font-size: 0.92rem;
+  font-weight: 850;
+}
+
+.location-picker-row button {
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: white;
+  padding: 0 14px;
+  color: var(--ink);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.location-picker-card input {
+  display: block;
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: white;
+  padding: 0 12px;
+  color: var(--ink);
+  font: inherit;
+}
+
+.location-picker-map {
+  position: relative;
+  overflow: hidden;
+  display: block;
+  min-height: 260px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #e9f1ee;
+}
+
+.location-picker-canvas {
+  display: block;
+  width: 100%;
+  height: 260px;
+}
+
+.location-picker-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  background: rgba(248, 252, 250, 0.86);
+  color: var(--muted);
+  text-align: center;
+}
+
+.location-picker-state strong {
+  color: var(--ink);
+}
+
+.location-picker-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.location-picker-card small,
+.location-picker-meta span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.location-picker-meta span {
+  border-radius: 999px;
+  background: rgba(20, 184, 166, 0.11);
+  padding: 5px 9px;
+  color: var(--teal-dark);
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .coordinate-grid {
   grid-column: 1 / -1;
   display: grid;
@@ -2206,11 +2310,13 @@ a {
 
   .tag-grid,
   .location-card,
+  .location-picker-row,
   .coordinate-grid {
     grid-template-columns: 1fr;
   }
 
-  .location-card button {
+  .location-card button,
+  .location-picker-row button {
     width: 100%;
   }
 

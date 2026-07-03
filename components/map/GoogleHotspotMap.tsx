@@ -10,6 +10,14 @@ import {
   reportToIncident,
   type FirestoreReport,
 } from "@/lib/firestoreReports";
+import {
+  loadGoogleMaps,
+  type GoogleMapCircle,
+  type GoogleMapInfoWindow,
+  type GoogleMapInstance,
+  type GoogleMapMarker,
+  type GoogleMapsApi,
+} from "@/lib/googleMaps";
 import type { Incident, Severity } from "@/lib/types";
 
 declare global {
@@ -17,46 +25,6 @@ declare global {
     google?: GoogleMapsApi;
     cleanAirGoogleMapsPromise?: Promise<void>;
   }
-}
-
-type GoogleMapSize = unknown;
-type GoogleMapPoint = unknown;
-
-interface GoogleMapMarker {
-  addListener: (eventName: string, handler: () => void) => void;
-  setMap: (map: GoogleMapInstance | null) => void;
-  setAnimation: (animation: unknown) => void;
-}
-
-interface GoogleMapCircle {
-  setMap: (map: GoogleMapInstance | null) => void;
-}
-
-interface GoogleMapInstance {
-  panTo: (position: { lat: number; lng: number }) => void;
-}
-
-interface GoogleMapInfoWindow {
-  setContent: (content: string) => void;
-  open: (options: { anchor?: GoogleMapMarker; map: GoogleMapInstance }) => void;
-}
-
-interface GoogleMapsApi {
-  maps: {
-    Animation: {
-      BOUNCE: unknown;
-    };
-    Circle: new (options: Record<string, unknown>) => GoogleMapCircle;
-    ControlPosition: {
-      RIGHT_BOTTOM: unknown;
-      TOP_RIGHT: unknown;
-    };
-    InfoWindow: new () => GoogleMapInfoWindow;
-    Map: new (node: HTMLElement, options: Record<string, unknown>) => GoogleMapInstance;
-    Marker: new (options: Record<string, unknown>) => GoogleMapMarker;
-    Point: new (x: number, y: number) => GoogleMapPoint;
-    Size: new (width: number, height: number) => GoogleMapSize;
-  };
 }
 
 const severityColor: Record<Severity, string> = {
@@ -96,23 +64,6 @@ const mapStyles = [
     stylers: [{ color: "#eef4f1" }],
   },
 ];
-
-function loadGoogleMaps(apiKey: string) {
-  if (window.google?.maps) return Promise.resolve();
-  if (window.cleanAirGoogleMapsPromise) return window.cleanAirGoogleMapsPromise;
-
-  window.cleanAirGoogleMapsPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&v=weekly`;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Google Maps failed to load."));
-    document.head.appendChild(script);
-  });
-
-  return window.cleanAirGoogleMapsPromise;
-}
 
 function markerIcon(incident: Incident) {
   const isPending = incident.status === "pending" || incident.status === "classification_failed";

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import Link from "next/link";
 import { defaultLocation, hazardTags } from "@/components/report/reportData";
+import ReportLocationPicker from "@/components/report/ReportLocationPicker";
 import Navbar from "@/components/shared/Navbar";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, type FirestoreReport } from "@/lib/firestoreReports";
@@ -91,10 +92,6 @@ export default function ReportPortal() {
     () => hazardTags.find((tag) => tag.id === selectedTag) ?? hazardTags[0],
     [selectedTag],
   );
-
-  function handleLocationClick() {
-    setLocation(defaultLocation);
-  }
 
   useEffect(() => {
     if (!submissionId || !storedInFirebase || !isFirebaseConfigured || !db) return;
@@ -252,41 +249,7 @@ export default function ReportPortal() {
               </div>
             </fieldset>
 
-            <div className="location-card">
-              <div>
-                <label htmlFor="report-location">Location</label>
-                <input
-                  id="report-location"
-                  value={location.label}
-                  onChange={(event) =>
-                    setLocation({ ...location, label: event.target.value })
-                  }
-                />
-              </div>
-              <button type="button" onClick={handleLocationClick}>
-                Detect my location
-              </button>
-              <div className="coordinate-grid">
-                <label>
-                  Lat
-                  <input
-                    value={location.lat}
-                    onChange={(event) =>
-                      setLocation({ ...location, lat: event.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  Long
-                  <input
-                    value={location.lng}
-                    onChange={(event) =>
-                      setLocation({ ...location, lng: event.target.value })
-                    }
-                  />
-                </label>
-              </div>
-            </div>
+            <ReportLocationPicker value={location} onChange={setLocation} />
 
             <label className="note-field">
               Optional note or voice transcript
