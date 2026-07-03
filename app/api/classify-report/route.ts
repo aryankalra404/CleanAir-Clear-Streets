@@ -38,6 +38,26 @@ interface ReportDoc {
   validation?: Record<string, unknown>;
 }
 
+function isPollutionClassification(classification: GeminiClassification) {
+  return (
+    classification.severity > 0 &&
+    ["dust", "fire", "haze", "smoke"].includes(classification.type)
+  );
+}
+
+function getPollutionSignalConfidence(classification: GeminiClassification) {
+  if (!isPollutionClassification(classification)) return 0;
+  return Math.round(classification.confidence * 100);
+}
+
+function getPostClassificationReason(classification: GeminiClassification) {
+  if (!isPollutionClassification(classification)) {
+    return "Gemini did not find a clear pollution signal; keeping this as a public report only.";
+  }
+
+  return "Gemini classified a pollution signal; waiting for citizen, sensor, or satellite corroboration.";
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -188,7 +208,7 @@ export async function POST(request: Request) {
     const inlineData = await fetchImageAsInlineData(report.photoUrl, request.url);
     const classification = await callGeminiWithRetry(inlineData);
     const h3CellId = report.h3CellId ?? "883da118d7fffff";
-    const confidencePercent = Math.round(classification.confidence * 100);
+    const pollutionSignalConfidence = getPollutionSignalConfidence(classification);
 
     await updateDoc(reportRef, {
       aiModel: GEMINI_MODEL,
@@ -197,20 +217,23 @@ export async function POST(request: Request) {
       status: "classified",
       validation: {
         ...(report.validation ?? {}),
+        alertReason: getPostClassificationReason(classification),
         citizenSignal: {
-          averageConfidence: confidencePercent,
+          averageConfidence: pollutionSignalConfidence,
           reportCount: 1,
           windowMinutes: 1,
         },
         fusion: {
           coverageAdjusted: true,
-          finalConfidence: confidencePercent,
+          finalConfidence: pollutionSignalConfidence,
           h3CellId,
           satelliteWeight: 0.2,
           sensorWeight: 0.12,
           visualWeight: 0.5,
         },
-        promotionReason: "Gemini classified report; waiting for corroboration threshold.",
+        promotionReason: isPollutionClassification(classification)
+          ? "Gemini classified report; waiting for corroboration threshold."
+          : "Not promotion eligible until another source shows a pollution signal.",
       },
     });
 

@@ -30,7 +30,7 @@ interface StoredReport {
   aiConfidence?: number;
   geminiClassification?: {
     confidence?: number;
-    severity?: string;
+    severity?: number | string;
     type?: string;
   };
   h3CellId?: string;
@@ -47,6 +47,7 @@ interface StoredReport {
 
 const DEFAULT_H3_CELL_ID = "883da118d7fffff";
 const PROMOTION_REPORT_THRESHOLD = 3;
+const POLLUTION_TYPES = new Set(["dust", "fire", "haze", "smoke"]);
 
 export function getHazardType(hazardId: string) {
   if (hazardId.includes("dust")) return "dust";
@@ -59,6 +60,20 @@ export function getSeverity(confidence: number) {
   if (confidence >= 80) return "critical";
   if (confidence >= 70) return "medium";
   return "low";
+}
+
+function getPollutionSignalConfidence(report: StoredReport) {
+  const classification = report.geminiClassification;
+  if (!classification?.type || !POLLUTION_TYPES.has(classification.type)) return 0;
+
+  const severity =
+    typeof classification.severity === "number"
+      ? classification.severity
+      : Number(classification.severity ?? 0);
+  if (!Number.isFinite(severity) || severity <= 0) return 0;
+
+  const confidence = classification.confidence ?? report.aiConfidence ?? 0;
+  return confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence);
 }
 
 export async function promoteCellIfThresholdPassed(h3CellId: string) {
@@ -75,17 +90,17 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       ref: reportDoc.ref,
       data: reportDoc.data() as StoredReport,
     }))
-    .filter((report) => !report.data.validation?.alertTier && report.data.geminiClassification);
+    .filter(
+      (report) =>
+        !report.data.validation?.alertTier &&
+        getPollutionSignalConfidence(report.data) > 0,
+    );
 
   if (clusteredReports.length < PROMOTION_REPORT_THRESHOLD) return;
 
   const avgConfidence = Math.round(
     clusteredReports.reduce(
-      (sum, report) =>
-        sum +
-        (report.data.geminiClassification?.confidence ??
-          report.data.aiConfidence ??
-          72),
+      (sum, report) => sum + getPollutionSignalConfidence(report.data),
       0,
     ) / clusteredReports.length,
   );

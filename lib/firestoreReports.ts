@@ -58,6 +58,17 @@ function normalizeConfidence(confidence?: number, fallback = 0) {
   return confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence);
 }
 
+function hasPollutionSignal(report: FirestoreReport) {
+  const classification = report.geminiClassification;
+  return (
+    classification?.severity !== 0 &&
+    (classification?.type === "dust" ||
+      classification?.type === "fire" ||
+      classification?.type === "haze" ||
+      classification?.type === "smoke")
+  );
+}
+
 function normalizeHazardType(type?: FirestoreReport["geminiClassification"] extends infer Classification
   ? Classification extends { type?: infer Type }
     ? Type
@@ -73,10 +84,9 @@ function normalizeHazardType(type?: FirestoreReport["geminiClassification"] exte
 export function reportToIncident(id: string, report: FirestoreReport): Incident {
   const severity = normalizeSeverity(report.geminiClassification?.severity);
   const hazardType = normalizeHazardType(report.geminiClassification?.type);
-  const aiConfidence = normalizeConfidence(
-    report.geminiClassification?.confidence,
-    report.aiConfidence ?? 0,
-  );
+  const aiConfidence = hasPollutionSignal(report)
+    ? normalizeConfidence(report.geminiClassification?.confidence, report.aiConfidence ?? 0)
+    : 0;
   const incident: Incident = {
     id: `firestore-${id}`,
     aiConfidence,
