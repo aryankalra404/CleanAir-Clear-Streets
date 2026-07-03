@@ -8,12 +8,69 @@ import { submitCitizenReport } from "@/lib/reportSubmissions";
 
 type SubmitState = "idle" | "submitting" | "submitted" | "error";
 
+const MAX_SOURCE_IMAGE_BYTES = 6_000_000;
+const MAX_STORED_IMAGE_CHARS = 620_000;
+const COMPRESSED_IMAGE_MAX_EDGE = 960;
+
+function loadImage(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not read that image. Try another photo."));
+    image.src = dataUrl;
+  });
+}
+
+async function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Could not read that image. Try another photo."));
+      }
+    };
+    reader.onerror = () => reject(new Error("Could not read that image. Try another photo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressPhotoForFirestore(file: File) {
+  if (file.size > MAX_SOURCE_IMAGE_BYTES) {
+    throw new Error("Choose a photo under 6 MB for the demo upload.");
+  }
+
+  const originalDataUrl = await fileToDataUrl(file);
+  const image = await loadImage(originalDataUrl);
+  const scale = Math.min(
+    1,
+    COMPRESSED_IMAGE_MAX_EDGE / Math.max(image.naturalWidth, image.naturalHeight),
+  );
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare that image. Try another photo.");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  const qualityLevels = [0.72, 0.62, 0.52, 0.42];
+  for (const quality of qualityLevels) {
+    const compressed = canvas.toDataURL("image/jpeg", quality);
+    if (compressed.length <= MAX_STORED_IMAGE_CHARS) return compressed;
+  }
+
+  throw new Error("Choose a simpler or smaller image so the demo can store it safely.");
+}
+
 export default function ReportPortal() {
   const [selectedTag, setSelectedTag] = useState(hazardTags[0].id);
   const [anonymous, setAnonymous] = useState(true);
   const [location, setLocation] = useState(defaultLocation);
   const [note, setNote] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
+  const [isPreparingPhoto, setIsPreparingPhoto] = useState(false);
   const [submissionId, setSubmissionId] = useState("");
   const [storedInFirebase, setStoredInFirebase] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -28,25 +85,34 @@ export default function ReportPortal() {
     setLocation(defaultLocation);
   }
 
-  function handlePhotoChange(file: File | undefined) {
+  async function handlePhotoChange(file: File | undefined) {
     if (!file) return;
-    if (file.size > 720_000) {
-      setSubmitError("Choose a smaller demo image under 720 KB until Cloud Storage is enabled.");
-      setPhotoUrl("");
-      return;
-    }
+    setSubmitError("");
+    setPhotoUrl("");
+    setIsPreparingPhoto(true);
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPhotoUrl(typeof reader.result === "string" ? reader.result : "");
+    try {
+      const compressedPhoto = await compressPhotoForFirestore(file);
+      setPhotoUrl(compressedPhoto);
       setSubmitError("");
-    };
-    reader.readAsDataURL(file);
+      setSubmitState("idle");
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not prepare that image.");
+      setSubmitState("error");
+    } finally {
+      setIsPreparingPhoto(false);
+    }
   }
 
   async function handleSubmit() {
     setSubmitState("submitting");
     setSubmitError("");
+
+    if (isPreparingPhoto) {
+      setSubmitError("Photo is still preparing. Try again in a moment.");
+      setSubmitState("error");
+      return;
+    }
 
     if (!photoUrl) {
       setSubmitError("Attach a photo before submitting so Gemini can classify the report.");
@@ -112,7 +178,11 @@ export default function ReportPortal() {
               <label htmlFor="pollution-photo">
                 <span>Upload photo</span>
                 <strong>
-                  {photoUrl ? "Photo attached for Gemini screening" : "Open camera or choose image"}
+                  {isPreparingPhoto
+                    ? "Preparing photo for Gemini screening"
+                    : photoUrl
+                      ? "Photo attached for Gemini screening"
+                      : "Open camera or choose image"}
                 </strong>
                 <small>Smoke, dust, flame, or visible haze works best.</small>
               </label>
@@ -192,10 +262,14 @@ export default function ReportPortal() {
 
             <button
               className="btn btn-primary report-submit"
-              disabled={submitState === "submitting"}
+              disabled={submitState === "submitting" || isPreparingPhoto}
               type="submit"
             >
-              {submitState === "submitting" ? "Submitting..." : "Submit Report"}
+              {isPreparingPhoto
+                ? "Preparing photo..."
+                : submitState === "submitting"
+                  ? "Submitting..."
+                  : "Submit Report"}
             </button>
           </form>
 
@@ -239,9 +313,13 @@ export default function ReportPortal() {
 
             {submitState === "error" && (
               <div className="submission-card error" role="alert">
-                <strong>Could not save report</strong>
+                <strong>
+                  {photoUrl ? "Could not save report" : "Photo needed before submit"}
+                </strong>
                 <p>
-                  Check Firestore setup and security rules, then try submitting again.
+                  {photoUrl
+                    ? "Check Firestore setup and security rules, then try submitting again."
+                    : "Attach a photo so Gemini can classify the report before validation."}
                 </p>
                 {submitError && <small>{submitError}</small>}
               </div>
