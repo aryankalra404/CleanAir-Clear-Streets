@@ -258,6 +258,18 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
 
 function IncidentDetail({ incident }: { incident: Incident }) {
   const evidence = incident.evidence ?? buildIncidentEvidence(incident);
+  const sensorLabel =
+    evidence.sensor.source === "CPCB" && evidence.sensor.stationName
+      ? `${evidence.sensor.stationName} · ${evidence.sensor.distanceKm?.toFixed(1)} km`
+      : "Estimated sensor context";
+  const sensorReading =
+    evidence.sensor.pm25 !== undefined && evidence.sensor.pm25 !== null
+      ? `PM2.5 ${evidence.sensor.pm25} µg/m³`
+      : `PM2.5 ${evidence.sensor.pm25Delta >= 0 ? "+" : ""}${evidence.sensor.pm25Delta}%`;
+  const sensorMeta =
+    evidence.sensor.source === "CPCB" && evidence.sensor.lastUpdated
+      ? `updated ${evidence.sensor.lastUpdated}`
+      : evidence.sensor.trend;
 
   return (
     <aside className="incident-detail-panel">
@@ -316,10 +328,9 @@ function IncidentDetail({ incident }: { incident: Incident }) {
             <strong>{evidence.coverage.nearestSensorKm.toFixed(1)} km</strong>
           </li>
           <li>
-            <span>Sensor trend</span>
+            <span>{sensorLabel}</span>
             <strong>
-              PM2.5 {evidence.sensor.pm25Delta >= 0 ? "+" : ""}
-              {evidence.sensor.pm25Delta}% · {evidence.sensor.trend}
+              {sensorReading} · {sensorMeta}
             </strong>
           </li>
           <li>

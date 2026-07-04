@@ -69,6 +69,7 @@ export function buildIncidentEvidence(incident: Incident): IncidentEvidence {
     },
     sensor: {
       pm25Delta: incident.source === "sensor" ? 42 : coverageLevel === "low" ? 8 : 18,
+      source: "estimated",
       trend: incident.severity === "critical" ? "rising" : "flat",
     },
   };

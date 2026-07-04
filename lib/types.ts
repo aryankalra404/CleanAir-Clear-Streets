@@ -46,7 +46,15 @@ export interface IncidentEvidence {
   };
   sensor: {
     pm25Delta: number;
-    trend: "rising" | "flat" | "falling";
+    trend: "rising" | "flat" | "falling" | "insufficient_data";
+    source?: "CPCB" | "estimated";
+    stationName?: string;
+    distanceKm?: number;
+    lastUpdated?: string;
+    pm25?: number | null;
+    pm10?: number | null;
+    no2?: number | null;
+    so2?: number | null;
   };
 }
 

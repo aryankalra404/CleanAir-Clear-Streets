@@ -31,6 +31,6 @@ export const hazardTags = [
 
 export const defaultLocation = {
   label: "Ghazipur Landfill, East Delhi",
-  lat: "28.6264",
-  lng: "77.3192",
+  lat: "28.623981",
+  lng: "77.315869",
 };

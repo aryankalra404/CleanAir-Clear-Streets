@@ -3,7 +3,7 @@ import "server-only";
 import * as ee from "@google/earthengine";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { getDemoH3CellId } from "@/lib/reportSubmissions";
+import { getH3CellId } from "@/lib/reportSubmissions";
 
 const EE_KEY_PATH = path.join(process.cwd(), "credentials", "earth-engine-key.json");
 const NO2_COLLECTION = "COPERNICUS/S5P/OFFL/L3_NO2";
@@ -67,7 +67,7 @@ const cache = new Map<string, CacheEntry>();
 let initPromise: Promise<void> | null = null;
 
 function getCacheKey(lat: number, lng: number) {
-  return getDemoH3CellId({
+  return getH3CellId({
     label: "Satellite sample",
     lat: String(lat),
     lng: String(lng),

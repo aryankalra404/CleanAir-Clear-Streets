@@ -9,6 +9,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import { latLngToCell } from "h3-js";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 
 export interface ReportSubmissionInput {
@@ -42,13 +43,25 @@ interface StoredReport {
   };
   validation?: {
     alertTier?: boolean;
+    sensor?: {
+      distanceKm?: number;
+      lastUpdated?: string | null;
+      no2?: number | null;
+      pm10?: number | null;
+      pm25?: number | null;
+      pm25Delta: number;
+      so2?: number | null;
+      source?: "CPCB" | "estimated";
+      stationName?: string;
+      trend: "rising" | "flat" | "falling" | "insufficient_data";
+    };
   };
 }
 
-const DEFAULT_H3_CELL_ID = "883da118d7fffff";
+const H3_RESOLUTION = 8;
+export const DEFAULT_H3_CELL_ID = "883da114bbfffff";
 const PROMOTION_REPORT_THRESHOLD = 3;
 const POLLUTION_TYPES = new Set(["dust", "fire", "haze", "smoke"]);
-const DEMO_H3_CELL_DEGREES = 0.025;
 
 export function getHazardType(hazardId: string) {
   if (hazardId.includes("dust")) return "dust";
@@ -63,16 +76,13 @@ export function getSeverity(confidence: number) {
   return "low";
 }
 
-export function getDemoH3CellId(location: ReportSubmissionInput["location"]) {
+export function getH3CellId(location: ReportSubmissionInput["location"]) {
   const lat = Number(location.lat);
   const lng = Number(location.lng);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return DEFAULT_H3_CELL_ID;
 
-  const latBucket = Math.round(lat / DEMO_H3_CELL_DEGREES);
-  const lngBucket = Math.round(lng / DEMO_H3_CELL_DEGREES);
-
-  return `demo-h3-${latBucket}-${lngBucket}`;
+  return latLngToCell(lat, lng, H3_RESOLUTION);
 }
 
 function getPollutionSignalConfidence(report: StoredReport) {
@@ -149,8 +159,11 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       source: "Earth Engine",
     },
     sensor: {
-      pm25Delta: 8,
-      trend: "rising",
+      ...(primaryReport.validation?.sensor ?? {
+        pm25Delta: 8,
+        source: "estimated" as const,
+        trend: "rising" as const,
+      }),
     },
   };
 
@@ -200,7 +213,7 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
   }
 
   const lowCoverage = Number(report.location.lat) > 28.6;
-  const h3CellId = getDemoH3CellId(report.location);
+  const h3CellId = getH3CellId(report.location);
 
   const docRef = await addDoc(collection(db, "reports"), {
     ...report,
@@ -239,6 +252,7 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
       },
       sensor: {
         pm25Delta: lowCoverage ? 8 : 24,
+        source: "estimated",
         trend: report.aiConfidence >= 80 ? "rising" : "flat",
       },
     },
