@@ -1,10 +1,15 @@
 import "server-only";
+import dns from "node:dns";
+
+dns.setDefaultResultOrder("ipv4first");
 
 const CPCB_ENDPOINT =
   "https://api.data.gov.in/resource/3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69";
 const PUBLIC_SAMPLE_KEY = "579b464db66ec23bdd000001";
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const PAGE_LIMIT = 1000;
+const REQUEST_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 500;
 const NCR_STATES = ["Delhi", "Haryana", "Uttar Pradesh", "Rajasthan"];
 const WHO_PM25_REFERENCE = 15;
 
@@ -166,6 +171,32 @@ function haversineKm(
   return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchCpcbPage(url: URL) {
+  for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`CPCB request failed (${response.status}).`);
+      }
+
+      const payload = (await response.json()) as CpcbApiResponse & { error?: string };
+      if (payload.error) throw new Error(payload.error);
+      return payload;
+    } catch (error) {
+      if (attempt === REQUEST_ATTEMPTS) throw error;
+      await sleep(RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  throw new Error("CPCB request failed.");
+}
+
 async function fetchStateRecords(apiKey: string, state: string) {
   const records: CpcbRecord[] = [];
   let offset = 0;
@@ -178,14 +209,7 @@ async function fetchStateRecords(apiKey: string, state: string) {
     url.searchParams.set("offset", String(offset));
     url.searchParams.set("filters[state]", state);
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`CPCB request failed (${response.status}).`);
-    }
-
-    const payload = (await response.json()) as CpcbApiResponse & { error?: string };
-    if (payload.error) throw new Error(payload.error);
-
+    const payload = await fetchCpcbPage(url);
     const page = Array.isArray(payload.records) ? payload.records : [];
     records.push(...page);
 
@@ -208,9 +232,18 @@ async function fetchAllStations() {
   const apiKey = getApiKey();
   if (!apiKey) return [];
 
-  const records = (await Promise.all(
+  const stateResults = await Promise.allSettled(
     NCR_STATES.map((state) => fetchStateRecords(apiKey, state)),
-  )).flat();
+  );
+  const records = stateResults.flatMap((result, index) => {
+    if (result.status === "fulfilled") return result.value;
+
+    console.warn(
+      `Could not fetch CPCB records for ${NCR_STATES[index]}`,
+      result.reason instanceof Error ? result.reason.message : result.reason,
+    );
+    return [];
+  });
   const stations = new Map<string, GroupedStation>();
 
   for (const record of records) {
