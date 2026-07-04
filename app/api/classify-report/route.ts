@@ -6,6 +6,8 @@ import {
 } from "@/lib/cpcbSensor";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { getWindData } from "@/lib/openWeather";
+import { recordPollutionSnapshot } from "@/lib/pollutionSnapshots";
 import {
   DEFAULT_H3_CELL_ID,
   promoteCellIfThresholdPassed,
@@ -45,6 +47,7 @@ interface ReportDoc {
   hazardLabel?: string;
   h3CellId?: string;
   location?: {
+    label?: string;
     lat?: string;
     lng?: string;
   };
@@ -264,14 +267,14 @@ export async function POST(request: Request) {
     const pollutionSignalConfidence = getPollutionSignalConfidence(classification);
     const lat = Number(report.location?.lat);
     const lng = Number(report.location?.lng);
-    const satelliteData =
+    const [satelliteData, nearestStation, windData] =
       Number.isFinite(lat) && Number.isFinite(lng)
-        ? await getSatelliteDataForPoint(lat, lng)
-        : null;
-    const nearestStation =
-      Number.isFinite(lat) && Number.isFinite(lng)
-        ? await getNearestStationReading(lat, lng)
-        : null;
+        ? await Promise.all([
+            getSatelliteDataForPoint(lat, lng),
+            getNearestStationReading(lat, lng),
+            getWindData(lat, lng),
+          ])
+        : [null, null, null];
     const sensorValidation = nearestStation
       ? {
           distanceKm: nearestStation.distanceKm,
@@ -302,6 +305,17 @@ export async function POST(request: Request) {
         ? pollutionSignalConfidence + satelliteBoost
         : satelliteBoost,
     );
+
+    await recordPollutionSnapshot({
+      lat,
+      lng,
+      locationLabel: report.location?.label ?? null,
+      reportId,
+      satellite: satelliteData,
+      sensor: nearestStation,
+      sourceContext: "report_classification",
+      wind: windData,
+    });
 
     await updateDoc(reportRef, {
       aiModel: GEMINI_MODEL,
