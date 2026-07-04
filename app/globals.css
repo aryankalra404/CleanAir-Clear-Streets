@@ -816,6 +816,29 @@ a {
   font-size: 1rem;
 }
 
+.demo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.demo-toggle.compact {
+  margin-top: 10px;
+  border-bottom: 0;
+  padding: 0;
+}
+
+.demo-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--teal-dark);
+}
+
 .public-map-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
@@ -919,8 +942,17 @@ a {
   box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1);
 }
 
+.map-incident-card.demo,
+.queue-item.demo {
+  border-style: dashed;
+  background: #f8fafc;
+  opacity: 0.86;
+}
+
 .map-incident-card strong {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
   color: var(--ink);
   font-size: 0.9rem;
@@ -1149,6 +1181,33 @@ a {
   color: var(--teal-dark);
 }
 
+.incident-empty-state,
+.evidence-awaiting-state {
+  display: grid;
+  gap: 7px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  padding: 14px;
+  color: var(--muted);
+}
+
+.incident-empty-state.compact {
+  margin: 4px;
+}
+
+.incident-empty-state strong,
+.evidence-awaiting-state strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.incident-empty-state span,
+.evidence-awaiting-state span {
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .incident-queue-list {
   display: grid;
   gap: 8px;
@@ -1175,6 +1234,23 @@ a {
   border-color: #8dd8ca;
   background: #ecfdf9;
   box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1);
+}
+
+.queue-copy strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.demo-badge {
+  border-radius: 999px;
+  background: #e2e8f0;
+  padding: 2px 6px;
+  color: #475569;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.08em;
 }
 
 .severity-dot {
@@ -1419,6 +1495,11 @@ a {
 
 .command-marker.low span {
   background: #10b981;
+}
+
+.command-marker.demo span {
+  border-style: dashed;
+  background: #94a3b8;
 }
 
 .command-marker.selected {

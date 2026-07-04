@@ -20,6 +20,7 @@ export const commandIncidents = [...mockIncidents]
   .map((incident) => ({
     ...incident,
     evidence: incident.evidence ?? buildIncidentEvidence(incident),
+    isMock: true,
   }))
   .sort((a, b) => {
     const severityDelta = severityRank[b.severity] - severityRank[a.severity];

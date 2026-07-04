@@ -67,13 +67,18 @@ const mapStyles = [
 
 function markerIcon(incident: Incident) {
   const isPending = incident.status === "pending" || incident.status === "classification_failed";
-  const color = isPending ? "#667085" : severityColor[incident.severity];
-  const label = isPending ? "?" : incident.severity === "critical" ? "!" : incident.severity === "medium" ? "•" : "";
+  const color = incident.isMock
+    ? "#94a3b8"
+    : isPending ? "#667085" : severityColor[incident.severity];
+  const label = incident.isMock
+    ? "D"
+    : isPending ? "?" : incident.severity === "critical" ? "!" : incident.severity === "medium" ? "•" : "";
+  const dash = incident.isMock ? `stroke-dasharray="4 3"` : "";
 
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
       <svg width="38" height="46" viewBox="0 0 38 46" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M19 45C19 45 35 29.8 35 17.8C35 8.5 27.8 1 19 1C10.2 1 3 8.5 3 17.8C3 29.8 19 45 19 45Z" fill="${color}" stroke="white" stroke-width="3"/>
+        <path d="M19 45C19 45 35 29.8 35 17.8C35 8.5 27.8 1 19 1C10.2 1 3 8.5 3 17.8C3 29.8 19 45 19 45Z" fill="${color}" stroke="white" stroke-width="3" ${dash}/>
         <circle cx="19" cy="18" r="8" fill="white" fill-opacity="0.96"/>
         <text x="19" y="22" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="800" fill="${color}">${label}</text>
       </svg>
@@ -90,7 +95,8 @@ export default function GoogleHotspotMap() {
   const circleRefs = useRef<GoogleMapCircle[]>([]);
   const infoWindowRef = useRef<GoogleMapInfoWindow | null>(null);
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
-  const [selectedId, setSelectedId] = useState(commandIncidents[0]?.id);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showDemoIncidents, setShowDemoIncidents] = useState(false);
   const hasApiKey = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">(
     hasApiKey ? "loading" : "error",
@@ -119,16 +125,21 @@ export default function GoogleHotspotMap() {
   }, []);
 
   const incidents = useMemo(
-    () => [...liveReports, ...commandIncidents],
-    [liveReports],
+    () => showDemoIncidents ? [...liveReports, ...commandIncidents] : liveReports,
+    [liveReports, showDemoIncidents],
   );
 
   const selectedIncident = useMemo(
-    () =>
-      incidents.find((incident) => incident.id === selectedId) ??
-      incidents[0],
-    [incidents, selectedId],
+    () => {
+      const selected = incidents.find((incident) => incident.id === selectedId);
+      const newestLiveIncident = liveReports[0];
+      const fallbackDemoIncident = showDemoIncidents ? commandIncidents[0] : undefined;
+      if (selected?.isMock && newestLiveIncident) return newestLiveIncident;
+      return selected ?? newestLiveIncident ?? fallbackDemoIncident ?? null;
+    },
+    [incidents, liveReports, selectedId, showDemoIncidents],
   );
+  const selectedIncidentId = selectedIncident?.id ?? null;
 
   useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -198,14 +209,18 @@ export default function GoogleHotspotMap() {
       const circle = new maps.Circle({
         center: position,
         fillColor:
-          incident.status === "pending" || incident.status === "classification_failed"
+          incident.isMock
+            ? "#94a3b8"
+            : incident.status === "pending" || incident.status === "classification_failed"
             ? "#667085"
             : severityColor[incident.severity],
         fillOpacity: incident.evidence?.alertTier ? 0.16 : 0.06,
         map: mapRef.current,
         radius: incident.evidence?.alertTier ? severityRadius[incident.severity] : 1400,
         strokeColor:
-          incident.status === "pending" || incident.status === "classification_failed"
+          incident.isMock
+            ? "#94a3b8"
+            : incident.status === "pending" || incident.status === "classification_failed"
             ? "#667085"
             : severityColor[incident.severity],
         strokeOpacity: incident.evidence?.alertTier ? 0.42 : 0.22,
@@ -236,7 +251,7 @@ export default function GoogleHotspotMap() {
     infoWindowRef.current?.setContent(`
       <div class="google-map-infowindow">
         <strong>${selectedIncident.neighborhood}</strong>
-        <span>${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
+        <span>${selectedIncident.isMock ? "DEMO · " : ""}${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
       </div>
     `);
     infoWindowRef.current?.open({
@@ -258,6 +273,14 @@ export default function GoogleHotspotMap() {
         <div className="map-status-card">
           <span>{incidents.length} visible</span>
           <strong>Google Maps layer</strong>
+          <label className="demo-toggle compact">
+            <input
+              checked={showDemoIncidents}
+              onChange={(event) => setShowDemoIncidents(event.target.checked)}
+              type="checkbox"
+            />
+            <span>Show demo incidents</span>
+          </label>
         </div>
       </div>
 
@@ -281,15 +304,20 @@ export default function GoogleHotspotMap() {
         <aside className="public-map-sidebar">
           <div className="map-sidebar-header">
             <p>Hotspot feed</p>
-            <span>Live</span>
+            <span>{showDemoIncidents ? "Live + demo" : "Live"}</span>
           </div>
           <div className="map-incident-list">
-            {incidents.map((incident) => (
+            {incidents.length === 0 ? (
+              <div className="incident-empty-state compact">
+                <strong>No live hotspots yet</strong>
+                <span>Citizen reports with pollution signals will appear here after classification.</span>
+              </div>
+            ) : incidents.map((incident) => (
               <button
                 className={
-                  incident.id === selectedIncident.id
-                    ? "map-incident-card selected"
-                    : "map-incident-card"
+                  incident.id === selectedIncidentId
+                    ? `map-incident-card selected ${incident.isMock ? "demo" : ""}`
+                    : `map-incident-card ${incident.isMock ? "demo" : ""}`
                 }
                 key={incident.id}
                 onClick={() => setSelectedId(incident.id)}
@@ -297,7 +325,10 @@ export default function GoogleHotspotMap() {
               >
                 <span className={`severity-dot ${incident.severity}`} />
                 <span>
-                  <strong>{incident.neighborhood}</strong>
+                  <strong>
+                    {incident.neighborhood}
+                    {incident.isMock && <i className="demo-badge">DEMO</i>}
+                  </strong>
                   <small>
                     {incident.hazardType} · {formatStatus(incident.status)} ·{" "}
                     {incident.evidence?.alertTier ? "alert-tier" : "public signal"}

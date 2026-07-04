@@ -1,5 +1,4 @@
 import type { Timestamp } from "firebase/firestore";
-import { buildIncidentEvidence } from "@/lib/incidentEvidence";
 import type {
   HazardType,
   HealthRisk,
@@ -103,13 +102,9 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     source: "citizen",
     status: normalizeStatus(report.status),
     timestamp:
-      report.createdAt?.toDate().toISOString() ??
       report.updatedAt?.toDate().toISOString() ??
+      report.createdAt?.toDate().toISOString() ??
       new Date().toISOString(),
   };
-
-  return {
-    ...incident,
-    evidence: incident.evidence ?? buildIncidentEvidence(incident),
-  };
+  return incident;
 }

@@ -37,7 +37,8 @@ const markerPositions = [
 export default function CommandCenter() {
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [liveAlertIncidents, setLiveAlertIncidents] = useState<Incident[]>([]);
-  const [selectedId, setSelectedId] = useState(commandIncidents[0]?.id);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showDemoIncidents, setShowDemoIncidents] = useState(false);
   const [source, setSource] = useState<Source | "all">("all");
 
   useEffect(() => {
@@ -86,8 +87,11 @@ export default function CommandCenter() {
   );
 
   const incidents = useMemo(
-    () => [...liveAlertIncidents, ...commandIncidents],
-    [liveAlertIncidents],
+    () =>
+      showDemoIncidents
+        ? [...liveAlertIncidents, ...commandIncidents]
+        : liveAlertIncidents,
+    [liveAlertIncidents, showDemoIncidents],
   );
 
   const filteredIncidents = useMemo(() => {
@@ -96,9 +100,14 @@ export default function CommandCenter() {
   }, [incidents, source]);
 
   const selectedIncident =
-    filteredIncidents.find((incident) => incident.id === selectedId) ??
-    filteredIncidents[0] ??
-    incidents[0];
+    (() => {
+      const selected = incidents.find((incident) => incident.id === selectedId);
+      const newestLiveIncident = liveAlertIncidents[0];
+      const fallbackDemoIncident = showDemoIncidents ? commandIncidents[0] : undefined;
+      if (selected?.isMock && newestLiveIncident) return newestLiveIncident;
+      return selected ?? newestLiveIncident ?? fallbackDemoIncident ?? null;
+    })();
+  const selectedIncidentId = selectedIncident?.id ?? null;
 
   const stats = useMemo(
     () =>
@@ -142,6 +151,15 @@ export default function CommandCenter() {
           <span>{filteredIncidents.length} active</span>
         </div>
 
+        <label className="demo-toggle">
+          <input
+            checked={showDemoIncidents}
+            onChange={(event) => setShowDemoIncidents(event.target.checked)}
+            type="checkbox"
+          />
+          <span>Show demo incidents</span>
+        </label>
+
         <div className="source-filter-row" aria-label="Source filters">
           {sourceFilters.map((filter) => (
             <button
@@ -156,12 +174,20 @@ export default function CommandCenter() {
         </div>
 
         <div className="incident-queue-list">
-          {filteredIncidents.map((incident) => (
+          {filteredIncidents.length === 0 ? (
+            <div className="incident-empty-state">
+              <strong>No live incidents yet</strong>
+              <span>
+                Promoted Firestore incidents will appear here as soon as the
+                corroboration threshold is crossed.
+              </span>
+            </div>
+          ) : filteredIncidents.map((incident) => (
             <button
               className={
-                incident.id === selectedIncident.id
-                  ? "queue-item selected"
-                  : "queue-item"
+                incident.id === selectedIncidentId
+                  ? `queue-item selected ${incident.isMock ? "demo" : ""}`
+                  : `queue-item ${incident.isMock ? "demo" : ""}`
               }
               key={incident.id}
               onClick={() => setSelectedId(incident.id)}
@@ -169,7 +195,10 @@ export default function CommandCenter() {
             >
               <span className={`severity-dot ${incident.severity}`} />
               <span className="queue-copy">
-                <strong>{incident.neighborhood}</strong>
+                <strong>
+                  {incident.neighborhood}
+                  {incident.isMock && <i className="demo-badge">DEMO</i>}
+                </strong>
                 <small>
                   {incident.hazardType} · {incident.source} ·{" "}
                   {incident.aiConfidence}% confidence
@@ -206,7 +235,9 @@ export default function CommandCenter() {
             <button
               aria-label={`Select ${incident.neighborhood}`}
               className={`command-marker ${markerPositions[index]} ${incident.severity} ${
-                selectedIncident.id === incident.id ? "selected" : ""
+                incident.isMock ? "demo" : ""
+              } ${
+                selectedIncidentId === incident.id ? "selected" : ""
               }`}
               key={incident.id}
               onClick={() => setSelectedId(incident.id)}
@@ -224,7 +255,11 @@ export default function CommandCenter() {
         </div>
       </div>
 
-      <IncidentDetail incident={selectedIncident} />
+      {selectedIncident ? (
+        <IncidentDetail incident={selectedIncident} />
+      ) : (
+        <EmptyIncidentDetail />
+      )}
     </section>
   );
 }
@@ -242,11 +277,13 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
       ) : (
         <ul>
           {signals.slice(0, 3).map((signal) => {
-            const evidence = signal.evidence ?? buildIncidentEvidence(signal);
+            const evidence = signal.evidence ?? (signal.isMock ? buildIncidentEvidence(signal) : null);
             return (
               <li key={signal.id}>
                 <strong>{signal.neighborhood}</strong>
-                <span>{evidence.promotionReason}</span>
+                <span>
+                  {evidence?.promotionReason ?? "Awaiting classification and fusion evidence."}
+                </span>
               </li>
             );
           })}
@@ -257,19 +294,21 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
 }
 
 function IncidentDetail({ incident }: { incident: Incident }) {
-  const evidence = incident.evidence ?? buildIncidentEvidence(incident);
+  const evidence = incident.evidence ?? (incident.isMock ? buildIncidentEvidence(incident) : null);
+  const isAwaitingClassification = !evidence;
+  const fallbackEvidence = evidence ?? buildIncidentEvidence(incident);
   const sensorLabel =
-    evidence.sensor.source === "CPCB" && evidence.sensor.stationName
-      ? `${evidence.sensor.stationName} · ${evidence.sensor.distanceKm?.toFixed(1)} km`
+    fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.stationName
+      ? `${fallbackEvidence.sensor.stationName} · ${fallbackEvidence.sensor.distanceKm?.toFixed(1)} km`
       : "Estimated sensor context";
   const sensorReading =
-    evidence.sensor.pm25 !== undefined && evidence.sensor.pm25 !== null
-      ? `PM2.5 ${evidence.sensor.pm25} µg/m³`
-      : `PM2.5 ${evidence.sensor.pm25Delta >= 0 ? "+" : ""}${evidence.sensor.pm25Delta}%`;
+    fallbackEvidence.sensor.pm25 !== undefined && fallbackEvidence.sensor.pm25 !== null
+      ? `PM2.5 ${fallbackEvidence.sensor.pm25} µg/m³`
+      : `PM2.5 ${fallbackEvidence.sensor.pm25Delta >= 0 ? "+" : ""}${fallbackEvidence.sensor.pm25Delta}%`;
   const sensorMeta =
-    evidence.sensor.source === "CPCB" && evidence.sensor.lastUpdated
-      ? `updated ${evidence.sensor.lastUpdated}`
-      : evidence.sensor.trend;
+    fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.lastUpdated
+      ? `updated ${fallbackEvidence.sensor.lastUpdated}`
+      : fallbackEvidence.sensor.trend;
 
   return (
     <aside className="incident-detail-panel">
@@ -296,51 +335,72 @@ function IncidentDetail({ incident }: { incident: Incident }) {
 
       <div className="ai-analysis-card">
         <p>Gemini multimodal analysis</p>
-        <h3>
-          {evidence.fusion.finalConfidence}% fusion confidence
-        </h3>
-        <div className="analysis-meter">
-          <span style={{ width: `${evidence.fusion.finalConfidence}%` }} />
-        </div>
-        <small>
-          Visual {incident.aiConfidence}% · sensor weight{" "}
-          {Math.round(evidence.fusion.sensorWeight * 100)}% · satellite weight{" "}
-          {Math.round(evidence.fusion.satelliteWeight * 100)}%
-        </small>
+        {isAwaitingClassification ? (
+          <>
+            <h3>Awaiting classification</h3>
+            <div className="analysis-meter pending">
+              <span style={{ width: "18%" }} />
+            </div>
+            <small>Fusion confidence will appear after Gemini, CPCB, and satellite evidence are written to Firestore.</small>
+          </>
+        ) : (
+          <>
+            <h3>
+              {fallbackEvidence.fusion.finalConfidence}% fusion confidence
+            </h3>
+            <div className="analysis-meter">
+              <span style={{ width: `${fallbackEvidence.fusion.finalConfidence}%` }} />
+            </div>
+            <small>
+              Visual {incident.aiConfidence}% · sensor weight{" "}
+              {Math.round(fallbackEvidence.fusion.sensorWeight * 100)}% · satellite weight{" "}
+              {Math.round(fallbackEvidence.fusion.satelliteWeight * 100)}%
+            </small>
+          </>
+        )}
       </div>
 
       <div className="evidence-trail-card">
         <p>Coverage-aware evidence trail</p>
-        <div className="evidence-score-row">
-          <strong>{evidence.coverage.label}</strong>
-          <span>H3 {evidence.fusion.h3CellId}</span>
-        </div>
-        <ul>
-          <li>
-            <span>Citizen corroboration</span>
-            <strong>
-              {evidence.citizenSignal.reportCount} reports /{" "}
-              {evidence.citizenSignal.windowMinutes} min
-            </strong>
-          </li>
-          <li>
-            <span>Nearest station</span>
-            <strong>{evidence.coverage.nearestSensorKm.toFixed(1)} km</strong>
-          </li>
-          <li>
-            <span>{sensorLabel}</span>
-            <strong>
-              {sensorReading} · {sensorMeta}
-            </strong>
-          </li>
-          <li>
-            <span>Satellite context</span>
-            <strong>
-              {evidence.satellite.freshness} · {evidence.satellite.lastPassTime}
-            </strong>
-          </li>
-        </ul>
-        <small>{evidence.alertReason}</small>
+        {isAwaitingClassification ? (
+          <div className="evidence-awaiting-state">
+            <strong>Awaiting classification...</strong>
+            <span>Live Firestore report has not received validation evidence yet.</span>
+          </div>
+        ) : (
+          <>
+            <div className="evidence-score-row">
+              <strong>{fallbackEvidence.coverage.label}</strong>
+              <span>H3 {fallbackEvidence.fusion.h3CellId}</span>
+            </div>
+            <ul>
+              <li>
+                <span>Citizen corroboration</span>
+                <strong>
+                  {fallbackEvidence.citizenSignal.reportCount} reports /{" "}
+                  {fallbackEvidence.citizenSignal.windowMinutes} min
+                </strong>
+              </li>
+              <li>
+                <span>Nearest station</span>
+                <strong>{fallbackEvidence.coverage.nearestSensorKm.toFixed(1)} km</strong>
+              </li>
+              <li>
+                <span>{sensorLabel}</span>
+                <strong>
+                  {sensorReading} · {sensorMeta}
+                </strong>
+              </li>
+              <li>
+                <span>Satellite context</span>
+                <strong>
+                  {fallbackEvidence.satellite.freshness} · {fallbackEvidence.satellite.lastPassTime}
+                </strong>
+              </li>
+            </ul>
+            <small>{fallbackEvidence.alertReason}</small>
+          </>
+        )}
       </div>
 
       <div className="recommended-action-card">
@@ -356,6 +416,23 @@ function IncidentDetail({ incident }: { incident: Incident }) {
         <button type="button">Deploy water cannon</button>
         <button type="button">Dispatch cleanup crew</button>
         <button type="button">Mark resolved</button>
+      </div>
+    </aside>
+  );
+}
+
+function EmptyIncidentDetail() {
+  return (
+    <aside className="incident-detail-panel">
+      <div className="command-panel-header">
+        <div>
+          <p>Incident detail</p>
+          <h2>No live incident selected</h2>
+        </div>
+      </div>
+      <div className="evidence-awaiting-state">
+        <strong>No live incidents yet</strong>
+        <span>Turn on demo incidents to preview the dashboard with sample data.</span>
       </div>
     </aside>
   );
