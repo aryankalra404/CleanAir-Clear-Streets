@@ -7,6 +7,7 @@ export type IncidentStatus =
   | "under_review"
   | "classified"
   | "classification_failed"
+  | "no_signal"
   | "verified"
   | "dispatched"
   | "resolved"

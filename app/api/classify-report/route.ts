@@ -237,6 +237,7 @@ async function callGeminiWithRetry(inlineData: { data: string; mimeType: string 
 
 export async function POST(request: Request) {
   let reportId = "";
+  const startedAt = Date.now();
 
   try {
     const body = (await request.json()) as { reportId?: string };
@@ -261,12 +262,47 @@ export async function POST(request: Request) {
       throw new Error("Report is missing photoUrl; cannot classify image.");
     }
 
+    const lat = Number(report.location?.lat);
+    const lng = Number(report.location?.lng);
     const inlineData = await fetchImageAsInlineData(report.photoUrl, request.url);
     const classification = await callGeminiWithRetry(inlineData);
     const h3CellId = report.h3CellId ?? DEFAULT_H3_CELL_ID;
     const pollutionSignalConfidence = getPollutionSignalConfidence(classification);
-    const lat = Number(report.location?.lat);
-    const lng = Number(report.location?.lng);
+
+    if (!isPollutionClassification(classification)) {
+      await updateDoc(reportRef, {
+        aiModel: GEMINI_MODEL,
+        classifiedAt: serverTimestamp(),
+        geminiClassification: classification,
+        status: "no_signal",
+        validation: {
+          ...(report.validation ?? {}),
+          alertReason: getPostClassificationReason(classification),
+          citizenSignal: {
+            averageConfidence: 0,
+            reportCount: 1,
+            windowMinutes: 1,
+          },
+          fusion: {
+            coverageAdjusted: false,
+            finalConfidence: 0,
+            h3CellId,
+            satelliteWeight: 0,
+            sensorWeight: 0,
+            visualWeight: 1,
+          },
+          promotionReason:
+            "Not promotion eligible because Gemini did not find a pollution signal.",
+        },
+      });
+
+      console.info(
+        `Report ${reportId} classified as ${classification.type} in ${Date.now() - startedAt}ms; local context skipped.`,
+      );
+
+      return NextResponse.json({ classification, ok: true });
+    }
+
     const [satelliteData, nearestStation, windData] =
       Number.isFinite(lat) && Number.isFinite(lng)
         ? await Promise.all([
@@ -306,7 +342,7 @@ export async function POST(request: Request) {
         : satelliteBoost,
     );
 
-    await recordPollutionSnapshot({
+    const snapshot = await recordPollutionSnapshot({
       lat,
       lng,
       locationLabel: report.location?.label ?? null,
@@ -343,9 +379,7 @@ export async function POST(request: Request) {
           sensorWeight: 0.12,
           visualWeight: 0.5,
         },
-        promotionReason: isPollutionClassification(classification)
-          ? "Gemini classified report; waiting for corroboration threshold."
-          : "Not promotion eligible until another source shows a pollution signal.",
+        promotionReason: "Gemini classified report; waiting for corroboration threshold.",
         satellite: {
           aerosolIndexAnomaly: satelliteData?.aerosolIndex.anomalyScore ?? 0,
           aerosolIndexRaw: satelliteData?.aerosolIndex.rawValue ?? null,
@@ -369,6 +403,10 @@ export async function POST(request: Request) {
     });
 
     await promoteCellIfThresholdPassed(h3CellId);
+
+    console.info(
+      `Report ${reportId} classified as ${classification.type} in ${Date.now() - startedAt}ms; snapshot stored: ${snapshot.stored}.`,
+    );
 
     return NextResponse.json({ classification, ok: true });
   } catch (error) {

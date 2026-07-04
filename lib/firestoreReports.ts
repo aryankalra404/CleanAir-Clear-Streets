@@ -26,7 +26,7 @@ export interface FirestoreReport {
   };
   note?: string;
   result?: string;
-  status?: IncidentStatus | "submitted" | "classified";
+  status?: IncidentStatus | "submitted" | "classified" | "no_signal";
   validation?: IncidentEvidence;
 }
 

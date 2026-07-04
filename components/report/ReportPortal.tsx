@@ -13,7 +13,7 @@ import { submitCitizenReport } from "@/lib/reportSubmissions";
 type SubmitState = "idle" | "submitting" | "submitted" | "error";
 type ClassificationFeedback =
   | {
-      tone: "accepted" | "neutral" | "error";
+      tone: "accepted" | "neutral" | "error" | "processing";
       message: string;
     }
   | null;
@@ -111,6 +111,10 @@ export default function ReportPortal() {
     () => hazardTags.find((tag) => tag.id === selectedTag) ?? hazardTags[0],
     [selectedTag],
   );
+  const isNoSignalFeedback = classificationFeedback?.tone === "neutral";
+  const isProcessingFeedback =
+    classificationFeedback?.tone === "processing" ||
+    (submitState === "submitted" && storedInFirebase && !classificationFeedback);
 
   useEffect(() => {
     if (!submissionId || !storedInFirebase || !isFirebaseConfigured || !db) return;
@@ -119,11 +123,28 @@ export default function ReportPortal() {
       if (!snapshot.exists()) return;
 
       const report = snapshot.data() as FirestoreReport;
+      if (report.status === "pending") {
+        setClassificationFeedback({
+          message: "Analyzing your photo...",
+          tone: "processing",
+        });
+        return;
+      }
+
       if (report.status === "classification_failed") {
         setClassificationFeedback({
           message:
             "Report saved, but Gemini could not classify this photo. It stays hidden until reviewed or retried.",
           tone: "error",
+        });
+        return;
+      }
+
+      if (report.status === "no_signal") {
+        setClassificationFeedback({
+          message:
+            "We couldn't detect a clear pollution signal in this photo. It won't appear on the public map, but thanks for the report - feel free to try again with a clearer photo of the smoke, dust, or haze if you still see something.",
+          tone: "neutral",
         });
         return;
       }
@@ -207,6 +228,12 @@ export default function ReportPortal() {
 
       setSubmissionId(submission.id);
       setStoredInFirebase(submission.stored);
+      if (submission.stored) {
+        setClassificationFeedback({
+          message: "Analyzing your photo...",
+          tone: "processing",
+        });
+      }
       setSubmitState("submitted");
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unknown Firebase error");
@@ -333,19 +360,6 @@ export default function ReportPortal() {
           </form>
 
           <aside className="report-side-panel">
-            <div className="ai-preview-card">
-              <p className="eyebrow">AI preview</p>
-              <h2>{selectedHazard.result}</h2>
-              <div className="confidence-meter">
-                <span style={{ width: `${selectedHazard.confidence}%` }} />
-              </div>
-              <strong>{selectedHazard.confidence}% visual confidence</strong>
-              <p>
-                After submission, the system checks nearby citizen reports,
-                sensor anomalies, and satellite context before escalating.
-              </p>
-            </div>
-
             <div className="report-flow-card">
               <h2>What happens next</h2>
               <ol>
@@ -356,18 +370,36 @@ export default function ReportPortal() {
             </div>
 
             {submitState === "submitted" && (
-              <div className="submission-card" role="status">
+              <div
+                className={
+                  isNoSignalFeedback
+                    ? "submission-card neutral"
+                    : "submission-card"
+                }
+                role="status"
+              >
                 <strong>
-                  {storedInFirebase ? "Report saved to Firebase" : "Report submitted"}
+                  {isNoSignalFeedback
+                    ? "Report checked"
+                    : isProcessingFeedback
+                      ? "Analyzing report"
+                    : storedInFirebase
+                      ? "Report saved to Firebase"
+                      : "Report submitted"}
                 </strong>
                 <p>
-                  Your report helped flag a possible hotspot near{" "}
-                  {location.label}. Municipal teams will see it in the incident
-                  queue after validation.
+                  {isNoSignalFeedback
+                    ? "The report remains saved for audit, but it will stay out of the public hotspot layer."
+                    : isProcessingFeedback
+                      ? "This can take a little while while the system checks whether the image shows smoke, dust, haze, or fire."
+                    : `Your report helped flag a possible hotspot near ${location.label}. Municipal teams will see it in the incident queue after validation.`}
                 </p>
                 {submissionId && <small>Submission ID: {submissionId}</small>}
                 {classificationFeedback && (
                   <small className={`classification-feedback ${classificationFeedback.tone}`}>
+                    {classificationFeedback.tone === "processing" && (
+                      <span className="classification-spinner" aria-hidden="true" />
+                    )}
                     {classificationFeedback.message}
                   </small>
                 )}
