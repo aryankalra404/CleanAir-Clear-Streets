@@ -232,7 +232,7 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
     const groupMap = new Map<string, { primary: Incident; count: number }>();
     signals.forEach((signal) => {
       const h3CellId = signal.h3CellId ?? latLngToCell(signal.latitude, signal.longitude, 8);
-      const groupId = `${h3CellId}-real`;
+      const groupId = `${h3CellId}-${signal.hazardType}`;
       
       const cluster = groupMap.get(groupId);
       if (!cluster) {

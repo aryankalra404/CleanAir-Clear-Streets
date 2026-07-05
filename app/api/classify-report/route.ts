@@ -15,14 +15,30 @@ import {
 } from "@/lib/reportSubmissions";
 
 const GEMINI_MODEL = "gemini-2.5-flash";
-const CLASSIFICATION_PROMPT = `Analyze this photo for signs of air pollution. Respond ONLY with valid JSON, no markdown formatting, no preamble:
+const CLASSIFICATION_PROMPT = `You are an air quality sensor for a municipal pollution monitoring system in Delhi NCR. 
+Analyze this citizen-uploaded photo for VISIBLE, active air pollution signals only.
+
+✅ Count as pollution:
+- Smoke plumes (from fires, vehicles, industrial stacks)
+- Visible dust clouds (from construction or soil disturbance)
+- Open flames or actively burning material
+- Dense atmospheric haze with a clear pollution source visible
+
+❌ Do NOT flag as pollution:
+- Natural fog, morning mist, or overcast/cloudy sky
+- Camera glare, lens flare, or blurry/dark photos
+- Garbage or waste with NO visible smoke or dust rising from it
+- General grey sky with no identifiable pollution source
+
+Respond ONLY with valid JSON, no markdown, no preamble:
 {
   "type": "smoke" | "dust" | "haze" | "fire" | "clear" | "unclear",
-  "severity": 1-5 (1=minimal, 5=severe),
+  "severity": 1-5 (1=barely visible trace, 3=clearly present, 5=severe dense plume or active fire),
   "confidence": 0.0-1.0,
-  "description": "one sentence describing what's visible"
+  "description": "one sentence: what specific pollution signal is visible, or why image is unclear/clean"
 }
-If the image does not clearly show pollution-related content, set type to "unclear" and severity to 0.`;
+
+Set type to "unclear" and severity to 0 if the image is blurry, too dark, shows only weather/fog, or you cannot confidently identify an active pollution source.`;
 
 type GeminiClassificationType = "clear" | "dust" | "fire" | "haze" | "smoke" | "unclear";
 

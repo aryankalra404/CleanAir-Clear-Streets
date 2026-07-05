@@ -77,26 +77,32 @@ export function resolveIncidentHazardType(report: {
   geminiClassification?: { type?: string; severity?: string | number };
 }): HazardType {
   const classification = report.geminiClassification;
-  const isPollution =
-    classification?.type &&
-    classification.type !== "clear" &&
-    classification.type !== "unclear" &&
-    Number(classification.severity) > 0;
+  const type = classification?.type;
+  const geminiHasResult = type && type !== "clear" && type !== "unclear" && Number(classification.severity) > 0;
 
-  if (isPollution) {
-    if (report.hazardId === "garbage-fire") return "fire";
-    if (report.hazardId === "traffic-smog") return "smog";
-    if (report.hazardId === "construction-dust") return "dust";
-    if (report.hazardId === "industrial-emission") return "industrial";
-    
+  // Step 1: Fire is the only unambiguous, safety-critical detection where Gemini
+  // overrides a mismatched citizen selection. Dust/haze/smoke are genuinely ambiguous
+  // (construction dust vs industrial haze look similar), so for those we trust the
+  // citizen's on-the-ground context — consistent with satellite channel selection.
+  if (geminiHasResult) {
     const lowerId = (report.hazardId || "").toLowerCase();
-    if (lowerId.includes("industrial")) return "industrial";
-    if (lowerId.includes("dust")) return "dust";
-    if (lowerId.includes("fire")) return "fire";
-    if (lowerId.includes("smog") || lowerId.includes("traffic")) return "smog";
+    if (type === "fire" && !lowerId.includes("fire")) return "fire";
   }
 
-  const type = classification?.type;
+  // Step 2: Resolve from the citizen's explicit button selection.
+  // This works even before Gemini has classified (pending state), preventing
+  // all pending reports from incorrectly collapsing to the same fallback type.
+  if (report.hazardId === "garbage-fire") return "fire";
+  if (report.hazardId === "traffic-smog") return "smog";
+  if (report.hazardId === "construction-dust") return "dust";
+  if (report.hazardId === "industrial-emission") return "industrial";
+  const lowerId = (report.hazardId || "").toLowerCase();
+  if (lowerId.includes("fire")) return "fire";
+  if (lowerId.includes("dust")) return "dust";
+  if (lowerId.includes("industrial")) return "industrial";
+  if (lowerId.includes("smog") || lowerId.includes("traffic")) return "smog";
+
+  // Step 3: Final fallback — use Gemini's generic visual type if no hazardId.
   if (type === "dust" || type === "fire" || type === "industrial" || type === "smog") {
     return type as HazardType;
   }

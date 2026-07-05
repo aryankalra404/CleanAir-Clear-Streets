@@ -221,30 +221,49 @@ export default function GoogleHotspotMap({
   );
 
   const clusters = useMemo(() => {
-    const groupMap = new Map<string, MapCluster>();
-    
+    // Pass 1 — group incidents by h3CellId + hazardType, record base coords
+    const groupMap = new Map<string, MapCluster & { baseLat: number; baseLng: number }>();
+    const cellGroups = new Map<string, string[]>(); // h3CellId → [groupId, ...]
+
     incidents.forEach((incident) => {
       const h3CellId = incident.h3CellId ?? latLngToCell(incident.latitude, incident.longitude, 8);
-      const groupId = h3CellId;
-      
-      let cluster = groupMap.get(groupId);
-      if (!cluster) {
-        cluster = {
+      const groupId = `${h3CellId}-${incident.hazardType}`;
+
+      if (!groupMap.has(groupId)) {
+        groupMap.set(groupId, {
           id: groupId,
           h3CellId,
+          baseLat: incident.latitude,
+          baseLng: incident.longitude,
           latitude: incident.latitude,
           longitude: incident.longitude,
           incidents: [],
-        };
-        groupMap.set(groupId, cluster);
+        });
+        const cell = cellGroups.get(h3CellId) ?? [];
+        cell.push(groupId);
+        cellGroups.set(h3CellId, cell);
       }
-      
+
+      const cluster = groupMap.get(groupId)!;
       cluster.incidents.push(incident);
       if (incident.linkedReportIds || incident.evidence?.alertTier) {
         cluster.promotedIncident = incident;
       }
     });
-    
+
+    // Pass 2 — spread clusters that share the same cell symmetrically around the base point
+    const SPREAD_RADIUS = 0.004; // ~440 m at Delhi latitude — clearly separate at city zoom
+    cellGroups.forEach((groupIds) => {
+      const total = groupIds.length;
+      if (total <= 1) return; // single cluster: no jitter needed
+      groupIds.forEach((groupId, i) => {
+        const cluster = groupMap.get(groupId)!;
+        const angle = (i * Math.PI * 2) / total - Math.PI / 2; // start from top
+        cluster.latitude = cluster.baseLat + Math.cos(angle) * SPREAD_RADIUS;
+        cluster.longitude = cluster.baseLng + Math.sin(angle) * SPREAD_RADIUS;
+      });
+    });
+
     return Array.from(groupMap.values());
   }, [incidents]);
 
@@ -365,31 +384,26 @@ export default function GoogleHotspotMap({
       const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
       const isPromoted = !!cluster.promotedIncident;
       
+      const clusterIndex = clusters.indexOf(cluster);
       const marker = new maps.Marker({
         map: mapRef.current,
         position,
-        title: primaryIncident.neighborhood,
+        title: `${primaryIncident.neighborhood} — ${primaryIncident.hazardType}`,
         icon: markerIcon(cluster, mode),
-        zIndex: primaryIncident.evidence?.alertTier ? 3 : 1,
+        zIndex: 10 + clusterIndex,
       });
+
+      const circleColor = mode === "public"
+        ? (hazardColor[primaryIncident.hazardType] ?? severityColor[primaryIncident.severity])
+        : (!isPromoted || isPending ? "#667085" : severityColor[primaryIncident.severity]);
 
       const circle = new maps.Circle({
         center: position,
-        fillColor:
-          !isPromoted
-            ? "#667085"
-            : isPending
-            ? "#667085"
-            : severityColor[primaryIncident.severity],
+        fillColor: circleColor,
         fillOpacity: primaryIncident.evidence?.alertTier ? 0.16 : 0.06,
         map: mapRef.current,
         radius: primaryIncident.evidence?.alertTier ? severityRadius[primaryIncident.severity] : 450,
-        strokeColor:
-          !isPromoted
-            ? "#667085"
-            : isPending
-            ? "#667085"
-            : severityColor[primaryIncident.severity],
+        strokeColor: circleColor,
         strokeOpacity: primaryIncident.evidence?.alertTier ? 0.42 : 0.22,
         strokeWeight: 1,
       });
@@ -422,7 +436,7 @@ export default function GoogleHotspotMap({
 
     // Find which cluster this incident belongs to so we can display cluster counts in the info window
     const h3CellId = selectedIncident.h3CellId ?? latLngToCell(selectedIncident.latitude, selectedIncident.longitude, 8);
-    const groupId = h3CellId;
+    const groupId = `${h3CellId}-${selectedIncident.hazardType}`;
     const cluster = clusters.find((c) => c.id === groupId);
     
     const reportCount = cluster?.promotedIncident?.linkedReportIds?.length ?? cluster?.incidents.length ?? 1;
