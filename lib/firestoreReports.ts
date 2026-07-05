@@ -28,6 +28,7 @@ export interface FirestoreReport {
   result?: string;
   status?: IncidentStatus | "submitted" | "classified" | "no_signal";
   validation?: IncidentEvidence;
+  photoUrl?: string;
   h3CellId?: string;
   linkedReportIds?: string[];
 }
@@ -99,7 +100,7 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     latitude: Number(report.location?.lat ?? 28.6264),
     longitude: Number(report.location?.lng ?? 77.3192),
     neighborhood: report.location?.label ?? "Citizen report",
-    photoUrl: "",
+    photoUrl: report.photoUrl ?? "",
     severity,
     source: "citizen",
     status: normalizeStatus(report.status),

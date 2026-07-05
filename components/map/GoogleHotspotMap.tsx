@@ -95,7 +95,9 @@ function getEvidenceSourceSummary(incident: Incident) {
   }
   if (
     evidence?.sensor?.source === "CPCB" &&
-    (evidence.sensor.pm25Delta > 300 || evidence.sensor.trend === "rising") &&
+    ((evidence.sensor.primaryDelta !== undefined && evidence.sensor.primaryDelta > 300) || 
+     (evidence.sensor.pm25Delta !== undefined && evidence.sensor.pm25Delta > 300) || 
+     evidence.sensor.trend === "rising") &&
     evidence.sensor.lastUpdated
   ) {
     sources.add("sensor");

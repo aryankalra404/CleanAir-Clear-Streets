@@ -3,6 +3,7 @@ import { doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import {
   getNearestStationReading,
   getPm25DeltaFromReference,
+  getPrimaryPollutant,
 } from "@/lib/cpcbSensor";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
@@ -61,6 +62,9 @@ function getEstimatedSensorValidation(lat: number, confidence: number) {
   const lowCoverage = Number.isFinite(lat) && lat > 28.6;
   return {
     pm25Delta: lowCoverage ? 8 : 24,
+    primaryDelta: lowCoverage ? 8 : 24,
+    primaryName: "PM2.5",
+    primaryValue: null,
     source: "estimated" as const,
     trend: confidence >= 80 ? "rising" as SensorTrend : "flat" as SensorTrend,
   };
@@ -311,6 +315,7 @@ export async function POST(request: Request) {
             getWindData(lat, lng),
           ])
         : [null, null, null];
+    const primaryPollutant = getPrimaryPollutant(classification.type, nearestStation);
     const sensorValidation = nearestStation
       ? {
           distanceKm: nearestStation.distanceKm,
@@ -319,6 +324,9 @@ export async function POST(request: Request) {
           pm10: nearestStation.pm10,
           pm25: nearestStation.pm25,
           pm25Delta: getPm25DeltaFromReference(nearestStation.pm25),
+          primaryDelta: primaryPollutant.delta,
+          primaryName: primaryPollutant.name,
+          primaryValue: primaryPollutant.value,
           so2: nearestStation.so2,
           source: nearestStation.source,
           stationName: nearestStation.stationName,

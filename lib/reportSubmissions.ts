@@ -108,35 +108,35 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
     where("h3CellId", "==", h3CellId),
   );
   const snapshot = await getDocs(reportsQuery);
-  const clusteredReports = snapshot.docs
+  const allReports = snapshot.docs
     .map((reportDoc) => ({
       id: reportDoc.id,
       ref: reportDoc.ref,
       data: reportDoc.data() as StoredReport,
     }))
     .filter(
-      (report) =>
-        !report.data.validation?.alertTier &&
-        getPollutionSignalConfidence(report.data) > 0,
+      (report) => getPollutionSignalConfidence(report.data) > 0
     );
 
-  if (clusteredReports.length < PROMOTION_REPORT_THRESHOLD) return;
+  if (allReports.length < PROMOTION_REPORT_THRESHOLD) return;
 
   const avgConfidence = Math.round(
-    clusteredReports.reduce(
+    allReports.reduce(
       (sum, report) => sum + getPollutionSignalConfidence(report.data),
       0,
-    ) / clusteredReports.length,
+    ) / allReports.length,
   );
-  const primaryReport = clusteredReports[0].data;
-  const promotionReason = `${clusteredReports.length} citizen reports in the same H3 cell crossed the 20 min corroboration threshold.`;
+  const primaryReport = allReports[0].data;
+  const reportWithPhoto = allReports.find((r) => !!r.data.photoUrl);
+  const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
+  const promotionReason = `${allReports.length} citizen reports in the same H3 cell crossed the 20 min corroboration threshold.`;
   const promotedValidation = {
     alertReason:
       "Citizen-corroborated hotspot promoted from public signals to municipal review.",
     alertTier: true,
     citizenSignal: {
       averageConfidence: avgConfidence,
-      reportCount: clusteredReports.length,
+      reportCount: allReports.length,
       windowMinutes: 20,
     },
     coverage: {
@@ -169,7 +169,7 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
   };
 
   await Promise.all(
-    clusteredReports.map((report) =>
+    allReports.map((report) =>
       updateDoc(report.ref, {
         status: "under_review",
         validation: promotedValidation,
@@ -190,13 +190,13 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       },
       h3CellId,
       hazardLabel: primaryReport.hazardLabel ?? "Citizen smoke cluster",
-      linkedReportIds: clusteredReports.map((report) => report.id),
+      linkedReportIds: allReports.map((report) => report.id),
       location: primaryReport.location ?? {
         label: "Citizen report cluster",
         lat: "28.6264",
         lng: "77.3192",
       },
-      photoUrl: primaryReport.photoUrl ?? "",
+      photoUrl: bestPhotoUrl,
       source: "citizen_cluster",
       status: "under_review",
       updatedAt: serverTimestamp(),

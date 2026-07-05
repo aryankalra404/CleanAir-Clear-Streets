@@ -47,6 +47,9 @@ export interface IncidentEvidence {
   };
   sensor: {
     pm25Delta: number;
+    primaryDelta?: number;
+    primaryName?: string;
+    primaryValue?: number | null;
     trend: "rising" | "flat" | "falling" | "insufficient_data";
     source?: "CPCB" | "estimated";
     stationName?: string;

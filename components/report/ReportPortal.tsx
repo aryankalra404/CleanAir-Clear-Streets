@@ -242,22 +242,22 @@ export default function ReportPortal() {
   }
 
   return (
-    <main className="report-page">
-      <div className="report-grid-bg" />
-      <div className="report-container">
+    <main className="app-page-shell">
+      <div className="app-page-container">
         <Navbar />
 
-        <section className="report-hero">
-          <div>
-            <p className="eyebrow">Public intake</p>
-            <h1>Report pollution hotspots.</h1>
-            <p>
-              Upload a photo, tag what you see, and share location context.
-              CleanAir Command validates the report with AI, local sensors, and
-              satellite signals before alerting municipal responders.
-            </p>
-          </div>
-        </section>
+        <div className="app-page-content">
+          <header className="public-map-header" style={{ marginBottom: "24px" }}>
+            <div>
+              <p className="eyebrow">Public intake</p>
+              <h1>Report pollution hotspots.</h1>
+              <p>
+                Upload a photo, tag what you see, and share location context.
+                CleanAir Command validates the report with AI, local sensors, and
+                satellite signals before alerting municipal responders.
+              </p>
+            </div>
+          </header>
 
         <section className="report-layout">
           <form
@@ -422,6 +422,7 @@ export default function ReportPortal() {
             )}
           </aside>
         </section>
+        </div>
       </div>
     </main>
   );

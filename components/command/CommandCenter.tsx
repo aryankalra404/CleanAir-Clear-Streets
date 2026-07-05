@@ -307,10 +307,14 @@ function IncidentDetail({ incident }: { incident: Incident }) {
     fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.stationName
       ? `${fallbackEvidence.sensor.stationName} · ${fallbackEvidence.sensor.distanceKm?.toFixed(1)} km`
       : "Estimated sensor context";
+  const pollutantName = fallbackEvidence.sensor.primaryName ?? "PM2.5";
+  const pollutantValue = fallbackEvidence.sensor.primaryValue ?? fallbackEvidence.sensor.pm25;
+  const pollutantDelta = fallbackEvidence.sensor.primaryDelta ?? fallbackEvidence.sensor.pm25Delta;
+
   const sensorReading =
-    fallbackEvidence.sensor.pm25 !== undefined && fallbackEvidence.sensor.pm25 !== null
-      ? `PM2.5 ${fallbackEvidence.sensor.pm25} µg/m³`
-      : `PM2.5 ${fallbackEvidence.sensor.pm25Delta >= 0 ? "+" : ""}${fallbackEvidence.sensor.pm25Delta}%`;
+    pollutantValue !== undefined && pollutantValue !== null
+      ? `${pollutantName} ${pollutantValue} µg/m³`
+      : `${pollutantName} ${pollutantDelta >= 0 ? "+" : ""}${pollutantDelta}%`;
   const sensorMeta =
     fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.lastUpdated
       ? `updated ${fallbackEvidence.sensor.lastUpdated}`

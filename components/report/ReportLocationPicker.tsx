@@ -158,83 +158,51 @@ export default function ReportLocationPicker({
   }
 
   useEffect(() => {
-    if (!mapEnabled) {
-      return;
-    }
-
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey || !mapNodeRef.current || !inputRef.current) {
+    if (!apiKey || !inputRef.current) {
       setStatus(apiKey ? "idle" : "error");
       return;
     }
 
     let cancelled = false;
-    setStatus("loading");
+    if (status === "idle") setStatus("loading");
 
     loadGoogleMaps(apiKey, { places: true })
       .then(() => {
-        if (cancelled || !mapNodeRef.current || !inputRef.current) return;
+        if (cancelled || !inputRef.current) return;
 
         const google = getGoogleMaps();
         const maps = google?.maps;
         if (!maps?.places) throw new Error("Google Places library is not available.");
 
-        const startPosition = toPosition(valueRef.current);
-        const map = new maps.Map(mapNodeRef.current, {
-          center: startPosition,
-          clickableIcons: false,
-          controlSize: 24,
-          disableDefaultUI: true,
-          gestureHandling: "cooperative",
-          mapTypeControl: false,
-          streetViewControl: false,
-          styles: pickerMapStyles,
-          zoom: 14,
-          zoomControl: true,
-        });
-        const marker = new maps.Marker({
-          draggable: true,
-          map,
-          position: startPosition,
-          title: "Drag to fine-tune report location",
-        });
-        const geocoder = new maps.Geocoder();
-        const autocomplete = new maps.places.Autocomplete(inputRef.current, {
-          componentRestrictions: { country: "in" },
-          fields: ["formatted_address", "geometry", "name"],
-        });
-
-        autocomplete.addListener("place_changed", () => {
-          const place = autocomplete.getPlace();
-          const placePosition = place.geometry?.location;
-          if (!placePosition) {
-            setHelperText("Select a place from the dropdown so coordinates can update.");
-            return;
-          }
-
-          commitLocation(
-            {
-              lat: placePosition.lat(),
-              lng: placePosition.lng(),
-            },
-            place.formatted_address ?? place.name ?? valueRef.current.label,
-          );
-        });
-
-        marker.addListener("dragend", () => {
-          const markerPosition = marker.getPosition?.();
-          if (!markerPosition) return;
-
-          void commitLocationWithReverseGeocode({
-            lat: markerPosition.lat(),
-            lng: markerPosition.lng(),
+        if (!autocompleteRef.current) {
+          const geocoder = new maps.Geocoder();
+          const autocomplete = new maps.places.Autocomplete(inputRef.current, {
+            componentRestrictions: { country: "in" },
+            fields: ["formatted_address", "geometry", "name"],
           });
-        });
 
-        mapRef.current = map;
-        markerRef.current = marker;
-        geocoderRef.current = geocoder;
-        autocompleteRef.current = autocomplete;
+          autocomplete.addListener("place_changed", () => {
+            const place = autocomplete.getPlace();
+            const placePosition = place.geometry?.location;
+            if (!placePosition) {
+              setHelperText("Select a place from the dropdown so coordinates can update.");
+              return;
+            }
+
+            commitLocation(
+              {
+                lat: placePosition.lat(),
+                lng: placePosition.lng(),
+              },
+              place.formatted_address ?? place.name ?? valueRef.current.label,
+            );
+          });
+
+          geocoderRef.current = geocoder;
+          autocompleteRef.current = autocomplete;
+        }
+
         setStatus("ready");
       })
       .catch(() => {
@@ -249,13 +217,76 @@ export default function ReportLocationPicker({
       const maps = getGoogleMaps()?.maps;
       if (autocompleteRef.current) {
         maps?.event.clearInstanceListeners(autocompleteRef.current);
+        autocompleteRef.current = null;
       }
+    };
+  }, [commitLocation]);
+
+  useEffect(() => {
+    if (!mapEnabled || !mapNodeRef.current) return;
+
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    if (!apiKey) return;
+
+    let cancelled = false;
+
+    loadGoogleMaps(apiKey, { places: true })
+      .then(() => {
+        if (cancelled || !mapNodeRef.current) return;
+
+        const google = getGoogleMaps();
+        const maps = google?.maps;
+        if (!maps) return;
+
+        const startPosition = toPosition(valueRef.current);
+        const map = new maps.Map(mapNodeRef.current, {
+          center: startPosition,
+          clickableIcons: false,
+          controlSize: 24,
+          disableDefaultUI: true,
+          gestureHandling: "cooperative",
+          mapTypeControl: false,
+          streetViewControl: false,
+          styles: pickerMapStyles,
+          zoom: 14,
+          zoomControl: true,
+        });
+        
+        const marker = new maps.Marker({
+          draggable: true,
+          map,
+          position: startPosition,
+          title: "Drag to fine-tune report location",
+        });
+
+        marker.addListener("dragend", () => {
+          const markerPosition = marker.getPosition?.();
+          if (!markerPosition) return;
+
+          void commitLocationWithReverseGeocode({
+            lat: markerPosition.lat(),
+            lng: markerPosition.lng(),
+          });
+        });
+
+        mapRef.current = map;
+        markerRef.current = marker;
+      })
+      .catch(() => {
+        // Handled by the main effect
+      });
+
+    return () => {
+      cancelled = true;
+      const maps = getGoogleMaps()?.maps;
       if (markerRef.current) {
         maps?.event.clearInstanceListeners(markerRef.current);
         markerRef.current.setMap(null);
+        markerRef.current = null;
       }
+      mapRef.current = null;
     };
-  }, [commitLocation, commitLocationWithReverseGeocode, mapEnabled]);
+  }, [mapEnabled, commitLocationWithReverseGeocode]);
 
   useEffect(() => {
     if (inputRef.current && inputRef.current.value !== value.label) {

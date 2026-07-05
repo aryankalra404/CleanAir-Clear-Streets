@@ -12,6 +12,9 @@ const REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
 const NCR_STATES = ["Delhi", "Haryana", "Uttar Pradesh", "Rajasthan"];
 const WHO_PM25_REFERENCE = 15;
+const WHO_PM10_REFERENCE = 45;
+const WHO_NO2_REFERENCE = 25;
+const WHO_SO2_REFERENCE = 40;
 
 type CpcbApiResponse = {
   records?: CpcbRecord[];
@@ -324,4 +327,29 @@ export async function getNearestStationReading(lat: number, lng: number) {
 export function getPm25DeltaFromReference(pm25: number | null) {
   if (pm25 === null) return 0;
   return Math.round(((pm25 - WHO_PM25_REFERENCE) / WHO_PM25_REFERENCE) * 100);
+}
+
+export function getPrimaryPollutant(
+  classificationType: string | undefined, 
+  station: Partial<NearbyStationReading> | null
+) {
+  if (!station) return { name: "PM2.5", value: null, delta: 0 };
+  
+  if (classificationType === "dust" && station.pm10 !== null && station.pm10 !== undefined) {
+    return { name: "PM10", value: station.pm10, delta: Math.round(((station.pm10 - WHO_PM10_REFERENCE) / WHO_PM10_REFERENCE) * 100) };
+  }
+  
+  if (classificationType === "industrial") {
+    const no2Delta = station.no2 != null ? Math.round(((station.no2 - WHO_NO2_REFERENCE) / WHO_NO2_REFERENCE) * 100) : 0;
+    const so2Delta = station.so2 != null ? Math.round(((station.so2 - WHO_SO2_REFERENCE) / WHO_SO2_REFERENCE) * 100) : 0;
+    if (no2Delta >= so2Delta && station.no2 != null) return { name: "NO2", value: station.no2, delta: no2Delta };
+    if (station.so2 != null) return { name: "SO2", value: station.so2, delta: so2Delta };
+  }
+  
+  // Default to PM2.5 for fire/smog, or if the preferred pollutant is missing
+  return { 
+    name: "PM2.5", 
+    value: station.pm25 ?? null, 
+    delta: station.pm25 != null ? Math.round(((station.pm25 - WHO_PM25_REFERENCE) / WHO_PM25_REFERENCE) * 100) : 0 
+  };
 }
