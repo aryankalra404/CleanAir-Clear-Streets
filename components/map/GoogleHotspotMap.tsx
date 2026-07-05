@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
-import { commandIncidents, formatStatus } from "@/components/command/commandData";
+import { formatStatus } from "@/components/command/commandData";
 import { latLngToCell } from "h3-js";
 import { CITY_CENTER } from "@/lib/mockData";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
@@ -35,9 +35,9 @@ const severityColor: Record<Severity, string> = {
 };
 
 const severityRadius: Record<Severity, number> = {
-  critical: 4200,
-  medium: 3000,
-  low: 2200,
+  critical: 600,
+  medium: 500,
+  low: 450,
 };
 
 type GoogleHotspotMapProps = {
@@ -45,7 +45,6 @@ type GoogleHotspotMapProps = {
   mode?: "public" | "operations";
   onIncidentSelect?: (incidentId: string) => void;
   selectedIncidentId?: string | null;
-  showDemoToggle?: boolean;
   showHeader?: boolean;
   showSidebar?: boolean;
 };
@@ -79,7 +78,6 @@ const mapStyles = [
 interface MapCluster {
   id: string;
   h3CellId: string;
-  isMock: boolean;
   latitude: number;
   longitude: number;
   incidents: Incident[];
@@ -135,14 +133,10 @@ function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
     };
   }
 
-  const color = primaryIncident.isMock
-    ? "#94a3b8"
-    : severityColor[primaryIncident.severity];
+  const color = severityColor[primaryIncident.severity];
 
   let label = "";
-  if (primaryIncident.isMock) {
-    label = "D";
-  } else if (primaryIncident.linkedReportIds) {
+  if (primaryIncident.linkedReportIds) {
     label = String(primaryIncident.linkedReportIds.length);
   } else if (mode === "operations") {
     label = String(evidenceSummary.count);
@@ -152,12 +146,10 @@ function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
     label = "•";
   }
 
-  const dash = primaryIncident.isMock ? `stroke-dasharray="4 3"` : "";
-
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
       <svg width="38" height="46" viewBox="0 0 38 46" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M19 45C19 45 35 29.8 35 17.8C35 8.5 27.8 1 19 1C10.2 1 3 8.5 3 17.8C3 29.8 19 45 19 45Z" fill="${color}" stroke="white" stroke-width="3" ${dash}/>
+        <path d="M19 45C19 45 35 29.8 35 17.8C35 8.5 27.8 1 19 1C10.2 1 3 8.5 3 17.8C3 29.8 19 45 19 45Z" fill="${color}" stroke="white" stroke-width="3" />
         <circle cx="19" cy="18" r="8" fill="white" fill-opacity="0.96"/>
         <text x="19" y="22" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="800" fill="${color}">${label}</text>
       </svg>
@@ -172,7 +164,6 @@ export default function GoogleHotspotMap({
   mode = "public",
   onIncidentSelect,
   selectedIncidentId: controlledSelectedIncidentId,
-  showDemoToggle = true,
   showHeader = true,
   showSidebar = true,
 }: GoogleHotspotMapProps = {}) {
@@ -183,7 +174,6 @@ export default function GoogleHotspotMap({
   const infoWindowRef = useRef<GoogleMapInfoWindow | null>(null);
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [selectedIdInternal, setSelectedIdInternal] = useState<string | null>(null);
-  const [showDemoIncidents, setShowDemoIncidents] = useState(false);
   const hasApiKey = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">(
     hasApiKey ? "loading" : "error",
@@ -216,9 +206,9 @@ export default function GoogleHotspotMap({
   const incidents = useMemo(
     () => {
       if (controlledIncidents) return controlledIncidents;
-      return showDemoIncidents ? [...liveReports, ...commandIncidents] : liveReports;
+      return liveReports;
     },
-    [controlledIncidents, liveReports, showDemoIncidents],
+    [controlledIncidents, liveReports],
   );
 
   const clusters = useMemo(() => {
@@ -226,15 +216,13 @@ export default function GoogleHotspotMap({
     
     incidents.forEach((incident) => {
       const h3CellId = incident.h3CellId ?? latLngToCell(incident.latitude, incident.longitude, 8);
-      const isMock = !!incident.isMock;
-      const groupId = `${h3CellId}-${isMock ? "demo" : "real"}`;
+      const groupId = h3CellId;
       
       let cluster = groupMap.get(groupId);
       if (!cluster) {
         cluster = {
           id: groupId,
           h3CellId,
-          isMock,
           latitude: incident.latitude,
           longitude: incident.longitude,
           incidents: [],
@@ -258,11 +246,9 @@ export default function GoogleHotspotMap({
       const selected = incidents.find((incident) => incident.id === selectedId);
       if (isControlled) return selected ?? null;
       const newestLiveIncident = liveReports[0];
-      const fallbackDemoIncident = showDemoIncidents ? commandIncidents[0] : undefined;
-      if (selected?.isMock && newestLiveIncident) return newestLiveIncident;
-      return selected ?? newestLiveIncident ?? fallbackDemoIncident ?? null;
+      return selected ?? newestLiveIncident ?? null;
     },
-    [incidents, isControlled, liveReports, selectedId, showDemoIncidents],
+    [incidents, isControlled, liveReports, selectedId],
   );
   const selectedIncidentId = selectedIncident?.id ?? null;
 
@@ -381,20 +367,16 @@ export default function GoogleHotspotMap({
       const circle = new maps.Circle({
         center: position,
         fillColor:
-          primaryIncident.isMock
-            ? "#94a3b8"
-            : !isPromoted
+          !isPromoted
             ? "#667085"
             : isPending
             ? "#667085"
             : severityColor[primaryIncident.severity],
         fillOpacity: primaryIncident.evidence?.alertTier ? 0.16 : 0.06,
         map: mapRef.current,
-        radius: primaryIncident.evidence?.alertTier ? severityRadius[primaryIncident.severity] : 1400,
+        radius: primaryIncident.evidence?.alertTier ? severityRadius[primaryIncident.severity] : 450,
         strokeColor:
-          primaryIncident.isMock
-            ? "#94a3b8"
-            : !isPromoted
+          !isPromoted
             ? "#667085"
             : isPending
             ? "#667085"
@@ -431,7 +413,7 @@ export default function GoogleHotspotMap({
 
     // Find which cluster this incident belongs to so we can display cluster counts in the info window
     const h3CellId = selectedIncident.h3CellId ?? latLngToCell(selectedIncident.latitude, selectedIncident.longitude, 8);
-    const groupId = `${h3CellId}-${selectedIncident.isMock ? "demo" : "real"}`;
+    const groupId = h3CellId;
     const cluster = clusters.find((c) => c.id === groupId);
     
     const reportCount = cluster?.promotedIncident?.linkedReportIds?.length ?? cluster?.incidents.length ?? 1;
@@ -450,7 +432,7 @@ export default function GoogleHotspotMap({
       content = `
         <div class="google-map-infowindow">
           <strong>${selectedIncident.neighborhood}</strong>
-          <span>${selectedIncident.isMock ? "DEMO · " : ""}${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
+          <span>${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
           ${reportCount > 1 ? `<span>${reportCount} citizen reports</span>` : ""}
           ${mode === "operations" ? `<span>${evidenceSummary.count} evidence source${evidenceSummary.count === 1 ? "" : "s"} · ${evidenceSummary.label}</span>` : ""}
         </div>
@@ -478,16 +460,6 @@ export default function GoogleHotspotMap({
           <div className="map-status-card">
             <span>{incidents.length} visible</span>
             <strong>Google Maps layer</strong>
-            {showDemoToggle && (
-              <label className="demo-toggle compact">
-                <input
-                  checked={showDemoIncidents}
-                  onChange={(event) => setShowDemoIncidents(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>Show demo incidents</span>
-              </label>
-            )}
           </div>
         </div>
       )}
@@ -519,7 +491,7 @@ export default function GoogleHotspotMap({
           <aside className="public-map-sidebar">
             <div className="map-sidebar-header">
               <p>Hotspot feed</p>
-              <span>{showDemoIncidents ? "Live + demo" : "Live"}</span>
+              <span>Live</span>
             </div>
             <div className="map-incident-list">
               {clusters.length === 0 ? (
@@ -536,8 +508,8 @@ export default function GoogleHotspotMap({
                   <button
                     className={
                       isSelected
-                        ? `map-incident-card selected ${primaryIncident.isMock ? "demo" : ""}`
-                        : `map-incident-card ${primaryIncident.isMock ? "demo" : ""}`
+                        ? `map-incident-card selected`
+                        : `map-incident-card`
                     }
                     key={cluster.id}
                     onClick={() => selectIncident(primaryIncident.id)}
@@ -547,7 +519,6 @@ export default function GoogleHotspotMap({
                     <span>
                       <strong>
                         {primaryIncident.neighborhood}
-                        {primaryIncident.isMock && <i className="demo-badge">DEMO</i>}
                       </strong>
                       <small>
                         {reportCount > 1 ? `${reportCount} reports · ` : ""}

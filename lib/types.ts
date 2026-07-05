@@ -75,7 +75,6 @@ export interface Incident {
   source: Source;
   timestamp: string; // ISO string
   isAnonymous: boolean;
-  isMock?: boolean;
   neighborhood: string;
   corroboratingReports?: number;
   evidence?: IncidentEvidence;

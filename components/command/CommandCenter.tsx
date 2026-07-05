@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import type { Incident, Source } from "@/lib/types";
 import {
-  commandIncidents,
   commandStats,
   formatStatus,
   getIncidentAge,
@@ -31,7 +30,6 @@ export default function CommandCenter() {
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [liveAlertIncidents, setLiveAlertIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showDemoIncidents, setShowDemoIncidents] = useState(false);
   const [source, setSource] = useState<Source | "all">("all");
 
   useEffect(() => {
@@ -79,13 +77,7 @@ export default function CommandCenter() {
     [liveReports],
   );
 
-  const incidents = useMemo(
-    () =>
-      showDemoIncidents
-        ? [...liveAlertIncidents, ...commandIncidents]
-        : liveAlertIncidents,
-    [liveAlertIncidents, showDemoIncidents],
-  );
+  const incidents = liveAlertIncidents;
 
   const filteredIncidents = useMemo(() => {
     if (source === "all") return incidents;
@@ -97,9 +89,7 @@ export default function CommandCenter() {
       const allIncidents = [...incidents, ...incomingSignals];
       const selected = allIncidents.find((incident) => incident.id === selectedId);
       const newestLiveIncident = liveAlertIncidents[0];
-      const fallbackDemoIncident = showDemoIncidents ? commandIncidents[0] : undefined;
-      if (selected?.isMock && newestLiveIncident) return newestLiveIncident;
-      return selected ?? newestLiveIncident ?? fallbackDemoIncident ?? null;
+      return selected ?? newestLiveIncident ?? null;
     })();
   const selectedIncidentId = selectedIncident?.id ?? null;
   const isSelectedUnpromoted = selectedIncident && !selectedIncident.evidence?.alertTier;
@@ -120,17 +110,15 @@ export default function CommandCenter() {
               .length,
           };
         }
-        if (!showDemoIncidents) {
-          if (stat.label === "Avg response") {
-            return { ...stat, value: "—" };
-          }
-          if (stat.label === "Peak risk") {
-            return { ...stat, value: "—", detail: "Awaiting forecast data" };
-          }
+        if (stat.label === "Avg response") {
+          return { ...stat, value: "—" };
+        }
+        if (stat.label === "Peak risk") {
+          return { ...stat, value: "—", detail: "Awaiting forecast data" };
         }
         return stat;
       }),
-    [incidents, showDemoIncidents],
+    [incidents],
   );
 
   return (
@@ -153,15 +141,6 @@ export default function CommandCenter() {
           </div>
           <span>{filteredIncidents.length} active</span>
         </div>
-
-        <label className="demo-toggle">
-          <input
-            checked={showDemoIncidents}
-            onChange={(event) => setShowDemoIncidents(event.target.checked)}
-            type="checkbox"
-          />
-          <span>Show demo incidents</span>
-        </label>
 
         <div className="source-filter-row" aria-label="Source filters">
           {sourceFilters.map((filter) => (
@@ -189,8 +168,8 @@ export default function CommandCenter() {
             <button
               className={
                 incident.id === selectedIncidentId
-                  ? `queue-item selected ${incident.isMock ? "demo" : ""}`
-                  : `queue-item ${incident.isMock ? "demo" : ""}`
+                  ? `queue-item selected`
+                  : `queue-item`
               }
               key={incident.id}
               onClick={() => setSelectedId(incident.id)}
@@ -200,7 +179,6 @@ export default function CommandCenter() {
               <span className="queue-copy">
                 <strong>
                   {incident.neighborhood}
-                  {incident.isMock && <i className="demo-badge">DEMO</i>}
                 </strong>
                 <small>
                   {incident.hazardType} · {incident.source} ·{" "}
@@ -231,7 +209,6 @@ export default function CommandCenter() {
           mode="operations"
           onIncidentSelect={setSelectedId}
           selectedIncidentId={selectedIncidentId}
-          showDemoToggle={false}
           showHeader={false}
           showSidebar={false}
         />
@@ -255,8 +232,7 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
     const groupMap = new Map<string, { primary: Incident; count: number }>();
     signals.forEach((signal) => {
       const h3CellId = signal.h3CellId ?? latLngToCell(signal.latitude, signal.longitude, 8);
-      const isMock = !!signal.isMock;
-      const groupId = `${h3CellId}-${isMock ? "demo" : "real"}`;
+      const groupId = `${h3CellId}-real`;
       
       const cluster = groupMap.get(groupId);
       if (!cluster) {
@@ -281,7 +257,7 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
         <ul>
           {groupedSignals.slice(0, 3).map((group) => {
             const signal = group.primary;
-            const evidence = signal.evidence ?? (signal.isMock ? buildIncidentEvidence(signal) : null);
+            const evidence = signal.evidence ?? null;
             return (
               <li key={signal.id}>
                 <strong>{signal.neighborhood}</strong>
@@ -300,7 +276,7 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
 }
 
 function IncidentDetail({ incident }: { incident: Incident }) {
-  const evidence = incident.evidence ?? (incident.isMock ? buildIncidentEvidence(incident) : null);
+  const evidence = incident.evidence ?? null;
   const isAwaitingClassification = !evidence;
   const fallbackEvidence = evidence ?? buildIncidentEvidence(incident);
   const sensorLabel =

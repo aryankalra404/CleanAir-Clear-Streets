@@ -15,29 +15,15 @@ const actionByHazard: Record<Incident["hazardType"], string> = {
   industrial: "Send inspection unit",
 };
 
-export const commandIncidents = [...mockIncidents]
-  .filter((incident) => incident.status !== "resolved")
-  .map((incident) => ({
-    ...incident,
-    evidence: incident.evidence ?? buildIncidentEvidence(incident),
-    isMock: true,
-  }))
-  .sort((a, b) => {
-    const severityDelta = severityRank[b.severity] - severityRank[a.severity];
-    if (severityDelta !== 0) return severityDelta;
-    return b.aiConfidence - a.aiConfidence;
-  });
-
 export const commandStats = [
   {
     label: "Active incidents",
-    value: mockLiveStats.activeHotspots,
+    value: 0,
     detail: "Across Delhi NCR",
   },
   {
     label: "Critical",
-    value: commandIncidents.filter((incident) => incident.severity === "critical")
-      .length,
+    value: 0,
     detail: "Need response now",
   },
   {
