@@ -10,6 +10,7 @@ import {
   getIncidentAge,
   getRecommendedAction,
 } from "@/components/command/commandData";
+import GoogleHotspotMap from "@/components/map/GoogleHotspotMap";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import {
   hasPollutionSignal,
@@ -23,15 +24,6 @@ const sourceFilters: Array<{ id: Source | "all"; label: string }> = [
   { id: "citizen", label: "Photo reports" },
   { id: "sensor", label: "Sensors" },
   { id: "satellite", label: "Satellite" },
-];
-
-const markerPositions = [
-  "command-marker-one",
-  "command-marker-two",
-  "command-marker-three",
-  "command-marker-four",
-  "command-marker-five",
-  "command-marker-six",
 ];
 
 export default function CommandCenter() {
@@ -220,39 +212,18 @@ export default function CommandCenter() {
             <p>Operational map</p>
             <h2>Delhi NCR hotspot layer</h2>
           </div>
-          <span>Heatmap + reports</span>
+          <span>{filteredIncidents.length} mapped</span>
         </div>
 
-        <div className="command-map">
-          <div className="command-map-grid" />
-          <div className="risk-zone risk-zone-critical" />
-          <div className="risk-zone risk-zone-medium" />
-          <div className="command-road command-road-one" />
-          <div className="command-road command-road-two" />
-          <div className="command-road command-road-three" />
-
-          {filteredIncidents.slice(0, 6).map((incident, index) => (
-            <button
-              aria-label={`Select ${incident.neighborhood}`}
-              className={`command-marker ${markerPositions[index]} ${incident.severity} ${
-                incident.isMock ? "demo" : ""
-              } ${
-                selectedIncidentId === incident.id ? "selected" : ""
-              }`}
-              key={incident.id}
-              onClick={() => setSelectedId(incident.id)}
-              type="button"
-            >
-              <span />
-            </button>
-          ))}
-
-          <div className="map-legend">
-            <span><i className="legend-critical" /> Critical</span>
-            <span><i className="legend-medium" /> Medium</span>
-            <span><i className="legend-low" /> Low</span>
-          </div>
-        </div>
+        <GoogleHotspotMap
+          incidents={filteredIncidents}
+          mode="operations"
+          onIncidentSelect={setSelectedId}
+          selectedIncidentId={selectedIncidentId}
+          showDemoToggle={false}
+          showHeader={false}
+          showSidebar={false}
+        />
       </div>
 
       {selectedIncident ? (

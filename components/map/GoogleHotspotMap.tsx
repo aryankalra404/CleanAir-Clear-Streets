@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { commandIncidents, formatStatus } from "@/components/command/commandData";
 import { CITY_CENTER } from "@/lib/mockData";
@@ -39,6 +39,16 @@ const severityRadius: Record<Severity, number> = {
   low: 2200,
 };
 
+type GoogleHotspotMapProps = {
+  incidents?: Incident[];
+  mode?: "public" | "operations";
+  onIncidentSelect?: (incidentId: string) => void;
+  selectedIncidentId?: string | null;
+  showDemoToggle?: boolean;
+  showHeader?: boolean;
+  showSidebar?: boolean;
+};
+
 const mapStyles = [
   {
     featureType: "poi",
@@ -65,14 +75,44 @@ const mapStyles = [
   },
 ];
 
-function markerIcon(incident: Incident) {
+function getEvidenceSourceSummary(incident: Incident) {
+  const sources = new Set<string>();
+  const evidence = incident.evidence;
+
+  if ((evidence?.citizenSignal.reportCount ?? incident.corroboratingReports ?? 0) > 0) {
+    sources.add("citizen");
+  }
+  if (evidence?.sensor.source === "CPCB" || (evidence?.fusion.sensorWeight ?? 0) > 0) {
+    sources.add("sensor");
+  }
+  if ((evidence?.fusion.satelliteWeight ?? 0) > 0) {
+    sources.add("satellite");
+  }
+  if (sources.size === 0) sources.add(incident.source);
+
+  return {
+    count: sources.size,
+    label: [...sources].join(" + "),
+  };
+}
+
+function markerIcon(incident: Incident, mode: "public" | "operations") {
   const isPending = incident.status === "pending" || incident.status === "classification_failed";
+  const evidenceSummary = getEvidenceSourceSummary(incident);
   const color = incident.isMock
     ? "#94a3b8"
     : isPending ? "#667085" : severityColor[incident.severity];
   const label = incident.isMock
     ? "D"
-    : isPending ? "?" : incident.severity === "critical" ? "!" : incident.severity === "medium" ? "•" : "";
+    : isPending
+      ? "?"
+      : mode === "operations"
+        ? String(evidenceSummary.count)
+        : incident.severity === "critical"
+          ? "!"
+          : incident.severity === "medium"
+            ? "•"
+            : "";
   const dash = incident.isMock ? `stroke-dasharray="4 3"` : "";
 
   return {
@@ -88,21 +128,31 @@ function markerIcon(incident: Incident) {
   };
 }
 
-export default function GoogleHotspotMap() {
+export default function GoogleHotspotMap({
+  incidents: controlledIncidents,
+  mode = "public",
+  onIncidentSelect,
+  selectedIncidentId: controlledSelectedIncidentId,
+  showDemoToggle = true,
+  showHeader = true,
+  showSidebar = true,
+}: GoogleHotspotMapProps = {}) {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRefs = useRef<Record<string, GoogleMapMarker>>({});
   const circleRefs = useRef<GoogleMapCircle[]>([]);
   const infoWindowRef = useRef<GoogleMapInfoWindow | null>(null);
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIdInternal, setSelectedIdInternal] = useState<string | null>(null);
   const [showDemoIncidents, setShowDemoIncidents] = useState(false);
   const hasApiKey = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">(
     hasApiKey ? "loading" : "error",
   );
+  const isControlled = controlledIncidents !== undefined;
 
   useEffect(() => {
+    if (isControlled) return;
     if (!isFirebaseConfigured || !db) return;
 
     const reportsQuery = query(
@@ -122,24 +172,34 @@ export default function GoogleHotspotMap() {
           .map((report) => reportToIncident(report.id, report.data)),
       );
     });
-  }, []);
+  }, [isControlled]);
 
   const incidents = useMemo(
-    () => showDemoIncidents ? [...liveReports, ...commandIncidents] : liveReports,
-    [liveReports, showDemoIncidents],
+    () => {
+      if (controlledIncidents) return controlledIncidents;
+      return showDemoIncidents ? [...liveReports, ...commandIncidents] : liveReports;
+    },
+    [controlledIncidents, liveReports, showDemoIncidents],
   );
+  const selectedId = controlledSelectedIncidentId ?? selectedIdInternal;
 
   const selectedIncident = useMemo(
     () => {
       const selected = incidents.find((incident) => incident.id === selectedId);
+      if (isControlled) return selected ?? null;
       const newestLiveIncident = liveReports[0];
       const fallbackDemoIncident = showDemoIncidents ? commandIncidents[0] : undefined;
       if (selected?.isMock && newestLiveIncident) return newestLiveIncident;
       return selected ?? newestLiveIncident ?? fallbackDemoIncident ?? null;
     },
-    [incidents, liveReports, selectedId, showDemoIncidents],
+    [incidents, isControlled, liveReports, selectedId, showDemoIncidents],
   );
   const selectedIncidentId = selectedIncident?.id ?? null;
+
+  const selectIncident = useCallback((incidentId: string) => {
+    onIncidentSelect?.(incidentId);
+    if (!isControlled) setSelectedIdInternal(incidentId);
+  }, [isControlled, onIncidentSelect]);
 
   useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -159,8 +219,8 @@ export default function GoogleHotspotMap() {
           clickableIcons: false,
           controlSize: 28,
           disableDefaultUI: true,
-          fullscreenControl: true,
-          mapTypeControl: true,
+          fullscreenControl: mode === "public",
+          mapTypeControl: mode === "public",
           mapTypeControlOptions: {
             position: maps.ControlPosition.TOP_RIGHT,
           },
@@ -175,6 +235,12 @@ export default function GoogleHotspotMap() {
 
         mapRef.current = map;
         infoWindowRef.current = new maps.InfoWindow();
+        window.setTimeout(() => {
+          if (!cancelled) {
+            maps.event.trigger(map, "resize");
+            map.setCenter?.(CITY_CENTER);
+          }
+        }, 0);
 
         setStatus("ready");
       })
@@ -185,7 +251,37 @@ export default function GoogleHotspotMap() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mode]);
+
+  useEffect(() => {
+    if (status !== "ready" || !mapNodeRef.current || !mapRef.current || !window.google?.maps) {
+      return;
+    }
+
+    const mapNode = mapNodeRef.current;
+    const map = mapRef.current;
+    const resizeMap = () => {
+      window.google?.maps.event.trigger(map, "resize");
+      if (selectedIncident) {
+        map.setCenter?.({
+          lat: selectedIncident.latitude,
+          lng: selectedIncident.longitude,
+        });
+      } else {
+        map.setCenter?.(CITY_CENTER);
+      }
+    };
+
+    resizeMap();
+    const observer = new ResizeObserver(resizeMap);
+    observer.observe(mapNode);
+    window.addEventListener("resize", resizeMap);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resizeMap);
+    };
+  }, [selectedIncident, status]);
 
   useEffect(() => {
     if (status !== "ready" || !mapRef.current || !window.google?.maps) return;
@@ -202,7 +298,7 @@ export default function GoogleHotspotMap() {
         map: mapRef.current,
         position,
         title: incident.neighborhood,
-        icon: markerIcon(incident),
+        icon: markerIcon(incident, mode),
         zIndex: incident.evidence?.alertTier ? 3 : 1,
       });
 
@@ -228,12 +324,12 @@ export default function GoogleHotspotMap() {
       });
 
       marker.addListener("click", () => {
-        setSelectedId(incident.id);
+        selectIncident(incident.id);
       });
       markerRefs.current[incident.id] = marker;
       circleRefs.current.push(circle);
     });
-  }, [incidents, status]);
+  }, [incidents, mode, selectIncident, status]);
 
   useEffect(() => {
     if (!selectedIncident || !mapRef.current || !window.google?.maps) return;
@@ -248,43 +344,55 @@ export default function GoogleHotspotMap() {
     marker?.setAnimation(window.google.maps.Animation.BOUNCE);
     window.setTimeout(() => marker?.setAnimation(null), 700);
 
+    const evidenceSummary = getEvidenceSourceSummary(selectedIncident);
     infoWindowRef.current?.setContent(`
       <div class="google-map-infowindow">
         <strong>${selectedIncident.neighborhood}</strong>
         <span>${selectedIncident.isMock ? "DEMO · " : ""}${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
+        ${mode === "operations" ? `<span>${evidenceSummary.count} evidence source${evidenceSummary.count === 1 ? "" : "s"} · ${evidenceSummary.label}</span>` : ""}
       </div>
     `);
     infoWindowRef.current?.open({
       anchor: marker,
       map: mapRef.current,
     });
-  }, [selectedIncident]);
+  }, [mode, selectedIncident]);
 
   return (
-    <section className="public-map-layout">
-      <div className="public-map-header">
-        <div>
-          <p className="eyebrow">Public map</p>
-          <h1>Live pollution hotspots</h1>
-          <p>
-            Verified reports, sensor flags, and predicted risk zones across Delhi NCR.
-          </p>
+    <section className={mode === "operations" ? "operations-map-layout" : "public-map-layout"}>
+      {showHeader && (
+        <div className="public-map-header">
+          <div>
+            <p className="eyebrow">Public map</p>
+            <h1>Live pollution hotspots</h1>
+            <p>
+              Verified reports, sensor flags, and predicted risk zones across Delhi NCR.
+            </p>
+          </div>
+          <div className="map-status-card">
+            <span>{incidents.length} visible</span>
+            <strong>Google Maps layer</strong>
+            {showDemoToggle && (
+              <label className="demo-toggle compact">
+                <input
+                  checked={showDemoIncidents}
+                  onChange={(event) => setShowDemoIncidents(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>Show demo incidents</span>
+              </label>
+            )}
+          </div>
         </div>
-        <div className="map-status-card">
-          <span>{incidents.length} visible</span>
-          <strong>Google Maps layer</strong>
-          <label className="demo-toggle compact">
-            <input
-              checked={showDemoIncidents}
-              onChange={(event) => setShowDemoIncidents(event.target.checked)}
-              type="checkbox"
-            />
-            <span>Show demo incidents</span>
-          </label>
-        </div>
-      </div>
+      )}
 
-      <div className="public-map-shell">
+      <div
+        className={
+          showSidebar
+            ? "public-map-shell"
+            : "public-map-shell operations-map-shell"
+        }
+      >
         <div className="google-map-panel">
           <div className="google-map-canvas" ref={mapNodeRef} />
           {status !== "ready" && (
@@ -301,43 +409,45 @@ export default function GoogleHotspotMap() {
           )}
         </div>
 
-        <aside className="public-map-sidebar">
-          <div className="map-sidebar-header">
-            <p>Hotspot feed</p>
-            <span>{showDemoIncidents ? "Live + demo" : "Live"}</span>
-          </div>
-          <div className="map-incident-list">
-            {incidents.length === 0 ? (
-              <div className="incident-empty-state compact">
-                <strong>No live hotspots yet</strong>
-                <span>Citizen reports with pollution signals will appear here after classification.</span>
-              </div>
-            ) : incidents.map((incident) => (
-              <button
-                className={
-                  incident.id === selectedIncidentId
-                    ? `map-incident-card selected ${incident.isMock ? "demo" : ""}`
-                    : `map-incident-card ${incident.isMock ? "demo" : ""}`
-                }
-                key={incident.id}
-                onClick={() => setSelectedId(incident.id)}
-                type="button"
-              >
-                <span className={`severity-dot ${incident.severity}`} />
-                <span>
-                  <strong>
-                    {incident.neighborhood}
-                    {incident.isMock && <i className="demo-badge">DEMO</i>}
-                  </strong>
-                  <small>
-                    {incident.hazardType} · {formatStatus(incident.status)} ·{" "}
-                    {incident.evidence?.alertTier ? "alert-tier" : "public signal"}
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-        </aside>
+        {showSidebar && (
+          <aside className="public-map-sidebar">
+            <div className="map-sidebar-header">
+              <p>Hotspot feed</p>
+              <span>{showDemoIncidents ? "Live + demo" : "Live"}</span>
+            </div>
+            <div className="map-incident-list">
+              {incidents.length === 0 ? (
+                <div className="incident-empty-state compact">
+                  <strong>No live hotspots yet</strong>
+                  <span>Citizen reports with pollution signals will appear here after classification.</span>
+                </div>
+              ) : incidents.map((incident) => (
+                <button
+                  className={
+                    incident.id === selectedIncidentId
+                      ? `map-incident-card selected ${incident.isMock ? "demo" : ""}`
+                      : `map-incident-card ${incident.isMock ? "demo" : ""}`
+                  }
+                  key={incident.id}
+                  onClick={() => selectIncident(incident.id)}
+                  type="button"
+                >
+                  <span className={`severity-dot ${incident.severity}`} />
+                  <span>
+                    <strong>
+                      {incident.neighborhood}
+                      {incident.isMock && <i className="demo-badge">DEMO</i>}
+                    </strong>
+                    <small>
+                      {incident.hazardType} · {formatStatus(incident.status)} ·{" "}
+                      {incident.evidence?.alertTier ? "alert-tier" : "public signal"}
+                    </small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </aside>
+        )}
       </div>
     </section>
   );

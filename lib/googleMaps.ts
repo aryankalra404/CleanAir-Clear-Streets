@@ -69,6 +69,7 @@ export interface GoogleMapsApi {
     };
     event: {
       clearInstanceListeners: (instance: unknown) => void;
+      trigger: (instance: unknown, eventName: string) => void;
     };
     Geocoder: new () => GoogleMapGeocoder;
     InfoWindow: new () => GoogleMapInfoWindow;
