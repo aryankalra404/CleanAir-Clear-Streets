@@ -87,13 +87,24 @@ export interface GoogleMapsApi {
   };
 }
 
-type GoogleMapsWindow = Window & {
+export type GoogleMapsWindow = typeof window & {
   cleanAirGoogleMapsPromises?: Partial<Record<string, Promise<void>>>;
   google?: GoogleMapsApi;
+  _cleanAirConsolePatched?: boolean;
 };
 
-function getGoogleMapsWindow() {
-  return window as GoogleMapsWindow;
+export function getGoogleMapsWindow(): GoogleMapsWindow {
+  const win = window as GoogleMapsWindow;
+  if (!win._cleanAirConsolePatched) {
+    win._cleanAirConsolePatched = true;
+    const originalWarn = console.warn;
+    console.warn = (...args) => {
+      if (typeof args[0] === "string" && args[0].includes("google.maps.places.Autocomplete is not available to new customers")) return;
+      if (typeof args[0] === "string" && args[0].includes("As of March 1st, 2025")) return;
+      originalWarn.apply(console, args);
+    };
+  }
+  return win;
 }
 
 export function getGoogleMaps() {
@@ -121,6 +132,7 @@ export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {
     const params = new URLSearchParams({
       key: apiKey,
       v: "weekly",
+      loading: "async",
     });
     if (needsPlaces) params.set("libraries", "places");
     script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;

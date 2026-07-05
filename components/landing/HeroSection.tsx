@@ -68,7 +68,7 @@ export default function HeroSection() {
   return (
     <div className="hero-layout">
       <div className="hero-copy">
-        <div className="live-pill">
+        <div className="live-pill" suppressHydrationWarning>
           <span />
           Live data feed · Last updated: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>
