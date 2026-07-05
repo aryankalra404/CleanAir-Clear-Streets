@@ -41,6 +41,7 @@ interface StoredReport {
     lat?: string;
     lng?: string;
   };
+  photoUrl?: string;
   validation?: {
     alertTier?: boolean;
     sensor?: {
@@ -195,6 +196,7 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
         lat: "28.6264",
         lng: "77.3192",
       },
+      photoUrl: primaryReport.photoUrl ?? "",
       source: "citizen_cluster",
       status: "under_review",
       updatedAt: serverTimestamp(),

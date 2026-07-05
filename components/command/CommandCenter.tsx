@@ -18,6 +18,7 @@ import {
   type FirestoreReport,
 } from "@/lib/firestoreReports";
 import { buildIncidentEvidence } from "@/lib/incidentEvidence";
+import { latLngToCell } from "h3-js";
 
 const sourceFilters: Array<{ id: Source | "all"; label: string }> = [
   { id: "all", label: "All sources" },
@@ -93,13 +94,15 @@ export default function CommandCenter() {
 
   const selectedIncident =
     (() => {
-      const selected = incidents.find((incident) => incident.id === selectedId);
+      const allIncidents = [...incidents, ...incomingSignals];
+      const selected = allIncidents.find((incident) => incident.id === selectedId);
       const newestLiveIncident = liveAlertIncidents[0];
       const fallbackDemoIncident = showDemoIncidents ? commandIncidents[0] : undefined;
       if (selected?.isMock && newestLiveIncident) return newestLiveIncident;
       return selected ?? newestLiveIncident ?? fallbackDemoIncident ?? null;
     })();
   const selectedIncidentId = selectedIncident?.id ?? null;
+  const isSelectedUnpromoted = selectedIncident && !selectedIncident.evidence?.alertTier;
 
   const stats = useMemo(
     () =>
@@ -117,9 +120,17 @@ export default function CommandCenter() {
               .length,
           };
         }
+        if (!showDemoIncidents) {
+          if (stat.label === "Avg response") {
+            return { ...stat, value: "—" };
+          }
+          if (stat.label === "Peak risk") {
+            return { ...stat, value: "—", detail: "Awaiting forecast data" };
+          }
+        }
         return stat;
       }),
-    [incidents],
+    [incidents, showDemoIncidents],
   );
 
   return (
@@ -212,11 +223,11 @@ export default function CommandCenter() {
             <p>Operational map</p>
             <h2>Delhi NCR hotspot layer</h2>
           </div>
-          <span>{filteredIncidents.length} mapped</span>
+          <span>{filteredIncidents.length + incomingSignals.length} mapped</span>
         </div>
 
         <GoogleHotspotMap
-          incidents={filteredIncidents}
+          incidents={[...filteredIncidents, ...incomingSignals]}
           mode="operations"
           onIncidentSelect={setSelectedId}
           selectedIncidentId={selectedIncidentId}
@@ -227,7 +238,11 @@ export default function CommandCenter() {
       </div>
 
       {selectedIncident ? (
-        <IncidentDetail incident={selectedIncident} />
+        isSelectedUnpromoted ? (
+          <UnverifiedSignalDetail incident={selectedIncident} />
+        ) : (
+          <IncidentDetail incident={selectedIncident} />
+        )
       ) : (
         <EmptyIncidentDetail />
       )}
@@ -236,24 +251,44 @@ export default function CommandCenter() {
 }
 
 function IncomingSignals({ signals }: { signals: Incident[] }) {
+  const groupedSignals = useMemo(() => {
+    const groupMap = new Map<string, { primary: Incident; count: number }>();
+    signals.forEach((signal) => {
+      const h3CellId = signal.h3CellId ?? latLngToCell(signal.latitude, signal.longitude, 8);
+      const isMock = !!signal.isMock;
+      const groupId = `${h3CellId}-${isMock ? "demo" : "real"}`;
+      
+      const cluster = groupMap.get(groupId);
+      if (!cluster) {
+        groupMap.set(groupId, { primary: signal, count: 1 });
+      } else {
+        cluster.count++;
+      }
+    });
+    return Array.from(groupMap.values());
+  }, [signals]);
+
   return (
     <div className="incoming-signals-panel">
       <div>
         <p>Incoming signals</p>
-        <span>{signals.length} unverified</span>
+        <span>{groupedSignals.length} unverified</span>
       </div>
 
-      {signals.length === 0 ? (
+      {groupedSignals.length === 0 ? (
         <small>No raw citizen reports waiting for corroboration.</small>
       ) : (
         <ul>
-          {signals.slice(0, 3).map((signal) => {
+          {groupedSignals.slice(0, 3).map((group) => {
+            const signal = group.primary;
             const evidence = signal.evidence ?? (signal.isMock ? buildIncidentEvidence(signal) : null);
             return (
               <li key={signal.id}>
                 <strong>{signal.neighborhood}</strong>
                 <span>
-                  {evidence?.promotionReason ?? "Awaiting classification and fusion evidence."}
+                  {group.count > 1 
+                    ? `${group.count} reports · awaiting corroboration threshold` 
+                    : (evidence?.promotionReason ?? "Awaiting classification and fusion evidence.")}
                 </span>
               </li>
             );
@@ -294,8 +329,11 @@ function IncidentDetail({ incident }: { incident: Incident }) {
       </div>
 
       <div className="evidence-preview">
-        <div className={`evidence-visual ${incident.hazardType}`}>
-          <span>{incident.hazardType}</span>
+        <div 
+          className={`evidence-visual ${incident.hazardType}`}
+          style={incident.photoUrl ? { backgroundImage: `url(${incident.photoUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+        >
+          {!incident.photoUrl && <span>{incident.hazardType}</span>}
         </div>
         <div className="evidence-meta">
           <span>Age: {getIncidentAge(incident.timestamp)}</span>
@@ -404,6 +442,27 @@ function EmptyIncidentDetail() {
       <div className="evidence-awaiting-state">
         <strong>No live incidents yet</strong>
         <span>Turn on demo incidents to preview the dashboard with sample data.</span>
+      </div>
+    </aside>
+  );
+}
+
+function UnverifiedSignalDetail({ incident }: { incident: Incident }) {
+  const reports = incident.corroboratingReports ?? 1;
+  return (
+    <aside className="incident-detail-panel">
+      <div className="command-panel-header">
+        <div>
+          <p>Unverified signal</p>
+          <h2>{incident.neighborhood}</h2>
+        </div>
+        <span className="detail-severity low">Pending</span>
+      </div>
+      <div className="evidence-awaiting-state">
+        <strong>Awaiting corroboration</strong>
+        <span>
+          {reports} citizen report{reports > 1 ? "s" : ""} received. Waiting for the promotion threshold (3 reports) or sensor/satellite confirmation before municipal escalation.
+        </span>
       </div>
     </aside>
   );

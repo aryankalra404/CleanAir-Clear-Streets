@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { commandIncidents, formatStatus } from "@/components/command/commandData";
+import { latLngToCell } from "h3-js";
 import { CITY_CENTER } from "@/lib/mockData";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import {
@@ -75,17 +76,31 @@ const mapStyles = [
   },
 ];
 
+interface MapCluster {
+  id: string;
+  h3CellId: string;
+  isMock: boolean;
+  latitude: number;
+  longitude: number;
+  incidents: Incident[];
+  promotedIncident?: Incident;
+}
+
 function getEvidenceSourceSummary(incident: Incident) {
   const sources = new Set<string>();
   const evidence = incident.evidence;
 
-  if ((evidence?.citizenSignal.reportCount ?? incident.corroboratingReports ?? 0) > 0) {
+  if ((evidence?.citizenSignal?.reportCount ?? incident.corroboratingReports ?? 0) > 0) {
     sources.add("citizen");
   }
-  if (evidence?.sensor.source === "CPCB" || (evidence?.fusion.sensorWeight ?? 0) > 0) {
+  if (
+    evidence?.sensor?.source === "CPCB" &&
+    (evidence.sensor.pm25Delta > 300 || evidence.sensor.trend === "rising") &&
+    evidence.sensor.lastUpdated
+  ) {
     sources.add("sensor");
   }
-  if ((evidence?.fusion.satelliteWeight ?? 0) > 0) {
+  if (evidence?.satellite?.signal && !evidence.satellite.signal.includes("not decisive") && !evidence.satellite.signal.includes("pending")) {
     sources.add("satellite");
   }
   if (sources.size === 0) sources.add(incident.source);
@@ -96,24 +111,46 @@ function getEvidenceSourceSummary(incident: Incident) {
   };
 }
 
-function markerIcon(incident: Incident, mode: "public" | "operations") {
-  const isPending = incident.status === "pending" || incident.status === "classification_failed";
-  const evidenceSummary = getEvidenceSourceSummary(incident);
-  const color = incident.isMock
+function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
+  const isPromoted = !!cluster.promotedIncident;
+  const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
+  const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
+  const evidenceSummary = getEvidenceSourceSummary(primaryIncident);
+  
+  if (!isPromoted || isPending) {
+    const hasMultiple = cluster.incidents.length > 1;
+    const r = hasMultiple ? 14 : 8;
+    const size = hasMultiple ? 28 : 16;
+    return {
+      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+        <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="${size/2}" cy="${size/2}" r="${r - 1}" fill="#94a3b8" stroke="#475569" stroke-width="1.5" stroke-dasharray="2 2" fill-opacity="0.3"/>
+          ${hasMultiple ? `<text x="${size/2}" y="${size/2 + 3.5}" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="800" fill="#334155">${cluster.incidents.length}</text>` : `<circle cx="${size/2}" cy="${size/2}" r="3" fill="#64748b"/>`}
+        </svg>
+      `)}`,
+      scaledSize: new window.google!.maps.Size(size, size),
+      anchor: new window.google!.maps.Point(size/2, size/2),
+    };
+  }
+
+  const color = primaryIncident.isMock
     ? "#94a3b8"
-    : isPending ? "#667085" : severityColor[incident.severity];
-  const label = incident.isMock
-    ? "D"
-    : isPending
-      ? "?"
-      : mode === "operations"
-        ? String(evidenceSummary.count)
-        : incident.severity === "critical"
-          ? "!"
-          : incident.severity === "medium"
-            ? "•"
-            : "";
-  const dash = incident.isMock ? `stroke-dasharray="4 3"` : "";
+    : severityColor[primaryIncident.severity];
+
+  let label = "";
+  if (primaryIncident.isMock) {
+    label = "D";
+  } else if (primaryIncident.linkedReportIds) {
+    label = String(primaryIncident.linkedReportIds.length);
+  } else if (mode === "operations") {
+    label = String(evidenceSummary.count);
+  } else if (primaryIncident.severity === "critical") {
+    label = "!";
+  } else if (primaryIncident.severity === "medium") {
+    label = "•";
+  }
+
+  const dash = primaryIncident.isMock ? `stroke-dasharray="4 3"` : "";
 
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
@@ -181,6 +218,37 @@ export default function GoogleHotspotMap({
     },
     [controlledIncidents, liveReports, showDemoIncidents],
   );
+
+  const clusters = useMemo(() => {
+    const groupMap = new Map<string, MapCluster>();
+    
+    incidents.forEach((incident) => {
+      const h3CellId = incident.h3CellId ?? latLngToCell(incident.latitude, incident.longitude, 8);
+      const isMock = !!incident.isMock;
+      const groupId = `${h3CellId}-${isMock ? "demo" : "real"}`;
+      
+      let cluster = groupMap.get(groupId);
+      if (!cluster) {
+        cluster = {
+          id: groupId,
+          h3CellId,
+          isMock,
+          latitude: incident.latitude,
+          longitude: incident.longitude,
+          incidents: [],
+        };
+        groupMap.set(groupId, cluster);
+      }
+      
+      cluster.incidents.push(incident);
+      if (incident.linkedReportIds || incident.evidence?.alertTier) {
+        cluster.promotedIncident = incident;
+      }
+    });
+    
+    return Array.from(groupMap.values());
+  }, [incidents]);
+
   const selectedId = controlledSelectedIncidentId ?? selectedIdInternal;
 
   const selectedIncident = useMemo(
@@ -292,44 +360,59 @@ export default function GoogleHotspotMap({
     circleRefs.current = [];
 
     const maps = window.google.maps;
-    incidents.forEach((incident) => {
-      const position = { lat: incident.latitude, lng: incident.longitude };
+    clusters.forEach((cluster) => {
+      const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
+      const position = { lat: cluster.latitude, lng: cluster.longitude };
+      
+      // Calculate display status for circles
+      const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
+      const isPromoted = !!cluster.promotedIncident;
+      
       const marker = new maps.Marker({
         map: mapRef.current,
         position,
-        title: incident.neighborhood,
-        icon: markerIcon(incident, mode),
-        zIndex: incident.evidence?.alertTier ? 3 : 1,
+        title: primaryIncident.neighborhood,
+        icon: markerIcon(cluster, mode),
+        zIndex: primaryIncident.evidence?.alertTier ? 3 : 1,
       });
 
       const circle = new maps.Circle({
         center: position,
         fillColor:
-          incident.isMock
+          primaryIncident.isMock
             ? "#94a3b8"
-            : incident.status === "pending" || incident.status === "classification_failed"
+            : !isPromoted
             ? "#667085"
-            : severityColor[incident.severity],
-        fillOpacity: incident.evidence?.alertTier ? 0.16 : 0.06,
+            : isPending
+            ? "#667085"
+            : severityColor[primaryIncident.severity],
+        fillOpacity: primaryIncident.evidence?.alertTier ? 0.16 : 0.06,
         map: mapRef.current,
-        radius: incident.evidence?.alertTier ? severityRadius[incident.severity] : 1400,
+        radius: primaryIncident.evidence?.alertTier ? severityRadius[primaryIncident.severity] : 1400,
         strokeColor:
-          incident.isMock
+          primaryIncident.isMock
             ? "#94a3b8"
-            : incident.status === "pending" || incident.status === "classification_failed"
+            : !isPromoted
             ? "#667085"
-            : severityColor[incident.severity],
-        strokeOpacity: incident.evidence?.alertTier ? 0.42 : 0.22,
+            : isPending
+            ? "#667085"
+            : severityColor[primaryIncident.severity],
+        strokeOpacity: primaryIncident.evidence?.alertTier ? 0.42 : 0.22,
         strokeWeight: 1,
       });
 
       marker.addListener("click", () => {
-        selectIncident(incident.id);
+        // If there's a promoted incident, select that. Otherwise just select the first one in the cluster.
+        selectIncident(primaryIncident.id);
       });
-      markerRefs.current[incident.id] = marker;
+      
+      // Map all incidents in this cluster to the same marker so we can focus them when selected
+      cluster.incidents.forEach((incident) => {
+        markerRefs.current[incident.id] = marker;
+      });
       circleRefs.current.push(circle);
     });
-  }, [incidents, mode, selectIncident, status]);
+  }, [clusters, mode, selectIncident, status]);
 
   useEffect(() => {
     if (!selectedIncident || !mapRef.current || !window.google?.maps) return;
@@ -344,19 +427,40 @@ export default function GoogleHotspotMap({
     marker?.setAnimation(window.google.maps.Animation.BOUNCE);
     window.setTimeout(() => marker?.setAnimation(null), 700);
 
+    // Find which cluster this incident belongs to so we can display cluster counts in the info window
+    const h3CellId = selectedIncident.h3CellId ?? latLngToCell(selectedIncident.latitude, selectedIncident.longitude, 8);
+    const groupId = `${h3CellId}-${selectedIncident.isMock ? "demo" : "real"}`;
+    const cluster = clusters.find((c) => c.id === groupId);
+    
+    const reportCount = cluster?.promotedIncident?.linkedReportIds?.length ?? cluster?.incidents.length ?? 1;
+    const isPromoted = !!cluster?.promotedIncident;
     const evidenceSummary = getEvidenceSourceSummary(selectedIncident);
-    infoWindowRef.current?.setContent(`
-      <div class="google-map-infowindow">
-        <strong>${selectedIncident.neighborhood}</strong>
-        <span>${selectedIncident.isMock ? "DEMO · " : ""}${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
-        ${mode === "operations" ? `<span>${evidenceSummary.count} evidence source${evidenceSummary.count === 1 ? "" : "s"} · ${evidenceSummary.label}</span>` : ""}
-      </div>
-    `);
+    
+    let content = "";
+    if (!isPromoted) {
+      content = `
+        <div class="google-map-infowindow unverified-tooltip" style="padding: 4px; text-align: center;">
+          <strong style="display: block; margin-bottom: 4px;">${selectedIncident.neighborhood}</strong>
+          <span style="color: #64748b; font-size: 13px;">${reportCount} citizen report${reportCount > 1 ? "s" : ""} · awaiting corroboration</span>
+        </div>
+      `;
+    } else {
+      content = `
+        <div class="google-map-infowindow">
+          <strong>${selectedIncident.neighborhood}</strong>
+          <span>${selectedIncident.isMock ? "DEMO · " : ""}${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
+          ${reportCount > 1 ? `<span>${reportCount} citizen reports</span>` : ""}
+          ${mode === "operations" ? `<span>${evidenceSummary.count} evidence source${evidenceSummary.count === 1 ? "" : "s"} · ${evidenceSummary.label}</span>` : ""}
+        </div>
+      `;
+    }
+    
+    infoWindowRef.current?.setContent(content);
     infoWindowRef.current?.open({
       anchor: marker,
       map: mapRef.current,
     });
-  }, [mode, selectedIncident]);
+  }, [mode, selectedIncident, clusters]);
 
   return (
     <section className={mode === "operations" ? "operations-map-layout" : "public-map-layout"}>
@@ -416,35 +520,42 @@ export default function GoogleHotspotMap({
               <span>{showDemoIncidents ? "Live + demo" : "Live"}</span>
             </div>
             <div className="map-incident-list">
-              {incidents.length === 0 ? (
+              {clusters.length === 0 ? (
                 <div className="incident-empty-state compact">
                   <strong>No live hotspots yet</strong>
                   <span>Citizen reports with pollution signals will appear here after classification.</span>
                 </div>
-              ) : incidents.map((incident) => (
-                <button
-                  className={
-                    incident.id === selectedIncidentId
-                      ? `map-incident-card selected ${incident.isMock ? "demo" : ""}`
-                      : `map-incident-card ${incident.isMock ? "demo" : ""}`
-                  }
-                  key={incident.id}
-                  onClick={() => selectIncident(incident.id)}
-                  type="button"
-                >
-                  <span className={`severity-dot ${incident.severity}`} />
-                  <span>
-                    <strong>
-                      {incident.neighborhood}
-                      {incident.isMock && <i className="demo-badge">DEMO</i>}
-                    </strong>
-                    <small>
-                      {incident.hazardType} · {formatStatus(incident.status)} ·{" "}
-                      {incident.evidence?.alertTier ? "alert-tier" : "public signal"}
-                    </small>
-                  </span>
-                </button>
-              ))}
+              ) : clusters.map((cluster) => {
+                const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
+                const reportCount = cluster.promotedIncident?.linkedReportIds?.length ?? cluster.incidents.length ?? 1;
+                const isSelected = cluster.incidents.some((incident) => incident.id === selectedIncidentId);
+                
+                return (
+                  <button
+                    className={
+                      isSelected
+                        ? `map-incident-card selected ${primaryIncident.isMock ? "demo" : ""}`
+                        : `map-incident-card ${primaryIncident.isMock ? "demo" : ""}`
+                    }
+                    key={cluster.id}
+                    onClick={() => selectIncident(primaryIncident.id)}
+                    type="button"
+                  >
+                    <span className={`severity-dot ${primaryIncident.severity}`} />
+                    <span>
+                      <strong>
+                        {primaryIncident.neighborhood}
+                        {primaryIncident.isMock && <i className="demo-badge">DEMO</i>}
+                      </strong>
+                      <small>
+                        {reportCount > 1 ? `${reportCount} reports · ` : ""}
+                        {primaryIncident.hazardType} · {formatStatus(primaryIncident.status)} ·{" "}
+                        {primaryIncident.evidence?.alertTier ? "alert-tier" : "public signal"}
+                      </small>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </aside>
         )}

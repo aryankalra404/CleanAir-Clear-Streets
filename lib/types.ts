@@ -76,6 +76,8 @@ export interface Incident {
   neighborhood: string;
   corroboratingReports?: number;
   evidence?: IncidentEvidence;
+  h3CellId?: string;
+  linkedReportIds?: string[];
 }
 
 export interface ForecastPoint {

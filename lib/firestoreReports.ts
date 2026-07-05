@@ -28,6 +28,8 @@ export interface FirestoreReport {
   result?: string;
   status?: IncidentStatus | "submitted" | "classified" | "no_signal";
   validation?: IncidentEvidence;
+  h3CellId?: string;
+  linkedReportIds?: string[];
 }
 
 function normalizeStatus(status?: FirestoreReport["status"]): IncidentStatus {
@@ -105,6 +107,8 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
       report.updatedAt?.toDate().toISOString() ??
       report.createdAt?.toDate().toISOString() ??
       new Date().toISOString(),
+    h3CellId: report.h3CellId,
+    linkedReportIds: report.linkedReportIds,
   };
   return incident;
 }
