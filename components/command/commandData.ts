@@ -1,12 +1,5 @@
-import { mockForecasts, mockIncidents, mockLiveStats } from "@/lib/mockData";
-import { buildIncidentEvidence } from "@/lib/incidentEvidence";
+import { mockForecasts, mockLiveStats } from "@/lib/mockData";
 import type { Incident } from "@/lib/types";
-
-const severityRank: Record<Incident["severity"], number> = {
-  critical: 3,
-  medium: 2,
-  low: 1,
-};
 
 const actionByHazard: Record<Incident["hazardType"], string> = {
   fire: "Deploy water-mist cannon",

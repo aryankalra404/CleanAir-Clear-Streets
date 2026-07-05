@@ -165,7 +165,6 @@ export default function ReportLocationPicker({
     }
 
     let cancelled = false;
-    if (status === "idle") setStatus("loading");
 
     loadGoogleMaps(apiKey, { places: true })
       .then(() => {

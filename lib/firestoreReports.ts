@@ -19,6 +19,7 @@ export interface FirestoreReport {
     type?: HazardType | "clear" | "haze" | "smoke" | "unclear";
   };
   hazardLabel?: string;
+  hazardId?: string;
   location?: {
     label?: string;
     lat?: string;
@@ -71,13 +72,33 @@ export function hasPollutionSignal(report: FirestoreReport) {
   );
 }
 
-function normalizeHazardType(type?: FirestoreReport["geminiClassification"] extends infer Classification
-  ? Classification extends { type?: infer Type }
-    ? Type
-    : never
-  : never): HazardType {
+export function resolveIncidentHazardType(report: {
+  hazardId?: string;
+  geminiClassification?: { type?: string; severity?: string | number };
+}): HazardType {
+  const classification = report.geminiClassification;
+  const isPollution =
+    classification?.type &&
+    classification.type !== "clear" &&
+    classification.type !== "unclear" &&
+    Number(classification.severity) > 0;
+
+  if (isPollution) {
+    if (report.hazardId === "garbage-fire") return "fire";
+    if (report.hazardId === "traffic-smog") return "smog";
+    if (report.hazardId === "construction-dust") return "dust";
+    if (report.hazardId === "industrial-emission") return "industrial";
+    
+    const lowerId = (report.hazardId || "").toLowerCase();
+    if (lowerId.includes("industrial")) return "industrial";
+    if (lowerId.includes("dust")) return "dust";
+    if (lowerId.includes("fire")) return "fire";
+    if (lowerId.includes("smog") || lowerId.includes("traffic")) return "smog";
+  }
+
+  const type = classification?.type;
   if (type === "dust" || type === "fire" || type === "industrial" || type === "smog") {
-    return type;
+    return type as HazardType;
   }
   if (type === "smoke" || type === "haze") return "smog";
   return "smog";
@@ -85,7 +106,7 @@ function normalizeHazardType(type?: FirestoreReport["geminiClassification"] exte
 
 export function reportToIncident(id: string, report: FirestoreReport): Incident {
   const severity = normalizeSeverity(report.geminiClassification?.severity);
-  const hazardType = normalizeHazardType(report.geminiClassification?.type);
+  const hazardType = resolveIncidentHazardType(report);
   const aiConfidence = hasPollutionSignal(report)
     ? normalizeConfidence(report.geminiClassification?.confidence, report.aiConfidence ?? 0)
     : 0;

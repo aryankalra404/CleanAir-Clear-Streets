@@ -111,13 +111,20 @@ function getEvidenceSourceSummary(incident: Incident) {
   };
 }
 
+const hazardColor: Record<string, string> = {
+  fire: "#ef4444", // Red
+  smog: "#3b82f6", // Blue
+  dust: "#f59e0b", // Orange
+  industrial: "#a855f7", // Purple
+};
+
 function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
   const isPromoted = !!cluster.promotedIncident;
   const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
   const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
   const evidenceSummary = getEvidenceSourceSummary(primaryIncident);
   
-  if (!isPromoted || isPending) {
+  if ((!isPromoted || isPending) && mode === "operations") {
     const hasMultiple = cluster.incidents.length > 1;
     const r = hasMultiple ? 14 : 8;
     const size = hasMultiple ? 28 : 16;
@@ -133,11 +140,13 @@ function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
     };
   }
 
-  const color = severityColor[primaryIncident.severity];
+  const color = mode === "public" ? (hazardColor[primaryIncident.hazardType] || severityColor[primaryIncident.severity]) : severityColor[primaryIncident.severity];
 
   let label = "";
   if (primaryIncident.linkedReportIds) {
     label = String(primaryIncident.linkedReportIds.length);
+  } else if (!isPromoted && mode === "public") {
+    label = String(cluster.incidents.length);
   } else if (mode === "operations") {
     label = String(evidenceSummary.count);
   } else if (primaryIncident.severity === "critical") {
@@ -421,11 +430,18 @@ export default function GoogleHotspotMap({
     const evidenceSummary = getEvidenceSourceSummary(selectedIncident);
     
     let content = "";
-    if (!isPromoted) {
+    if (!isPromoted && mode === "operations") {
       content = `
         <div class="google-map-infowindow unverified-tooltip" style="padding: 4px; text-align: center;">
           <strong style="display: block; margin-bottom: 4px;">${selectedIncident.neighborhood}</strong>
           <span style="color: #64748b; font-size: 13px;">${reportCount} citizen report${reportCount > 1 ? "s" : ""} · awaiting corroboration</span>
+        </div>
+      `;
+    } else if (!isPromoted && mode !== "operations") {
+      content = `
+        <div class="google-map-infowindow" style="padding: 4px;">
+          <strong style="display: block; margin-bottom: 4px;">${selectedIncident.neighborhood}</strong>
+          <span style="color: #64748b; font-size: 13px;">${selectedIncident.hazardType} · ${reportCount} reported</span>
         </div>
       `;
     } else {

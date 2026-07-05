@@ -11,6 +11,8 @@ import {
 } from "firebase/firestore";
 import { latLngToCell } from "h3-js";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { resolveIncidentHazardType } from "@/lib/firestoreReports";
+import type { IncidentEvidence } from "@/lib/types";
 
 export interface ReportSubmissionInput {
   anonymous: boolean;
@@ -35,6 +37,7 @@ interface StoredReport {
     type?: string;
   };
   h3CellId?: string;
+  hazardId?: string;
   hazardLabel?: string;
   location?: {
     label?: string;
@@ -42,21 +45,7 @@ interface StoredReport {
     lng?: string;
   };
   photoUrl?: string;
-  validation?: {
-    alertTier?: boolean;
-    sensor?: {
-      distanceKm?: number;
-      lastUpdated?: string | null;
-      no2?: number | null;
-      pm10?: number | null;
-      pm25?: number | null;
-      pm25Delta: number;
-      so2?: number | null;
-      source?: "CPCB" | "estimated";
-      stationName?: string;
-      trend: "rising" | "flat" | "falling" | "insufficient_data";
-    };
-  };
+  validation?: IncidentEvidence;
 }
 
 const H3_RESOLUTION = 8;
@@ -118,92 +107,118 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       (report) => getPollutionSignalConfidence(report.data) > 0
     );
 
-  if (allReports.length < PROMOTION_REPORT_THRESHOLD) return;
+  const reportsByHazard: Record<string, typeof allReports> = {};
+  for (const r of allReports) {
+    const hazard = resolveIncidentHazardType(r.data);
+    if (!reportsByHazard[hazard]) reportsByHazard[hazard] = [];
+    reportsByHazard[hazard].push(r);
+  }
 
-  const avgConfidence = Math.round(
-    allReports.reduce(
-      (sum, report) => sum + getPollutionSignalConfidence(report.data),
-      0,
-    ) / allReports.length,
-  );
-  const primaryReport = allReports[0].data;
-  const reportWithPhoto = allReports.find((r) => !!r.data.photoUrl);
-  const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
-  const promotionReason = `${allReports.length} citizen reports in the same H3 cell crossed the 20 min corroboration threshold.`;
-  const promotedValidation = {
-    alertReason:
-      "Citizen-corroborated hotspot promoted from public signals to municipal review.",
-    alertTier: true,
-    citizenSignal: {
-      averageConfidence: avgConfidence,
-      reportCount: allReports.length,
-      windowMinutes: 20,
-    },
-    coverage: {
-      label: "Low station coverage",
-      level: "low",
-      nearestSensorKm: 3.2,
-    },
-    fusion: {
-      coverageAdjusted: true,
-      finalConfidence: Math.min(98, avgConfidence + 18),
-      h3CellId,
-      satelliteWeight: 0.2,
-      sensorWeight: 0.12,
-      visualWeight: 0.5,
-    },
-    promotionReason,
-    satellite: {
-      freshness: "stale",
-      lastPassTime: "Yesterday 10:18",
-      signal: "Last Sentinel-5P pass not decisive; alert driven by citizen cluster.",
-      source: "Earth Engine",
-    },
-    sensor: {
-      ...(primaryReport.validation?.sensor ?? {
+  for (const [hazardType, hazardReports] of Object.entries(reportsByHazard)) {
+    if (hazardReports.length < PROMOTION_REPORT_THRESHOLD) continue;
+
+    const avgConfidence = Math.round(
+      hazardReports.reduce(
+        (sum, report) => sum + getPollutionSignalConfidence(report.data),
+        0,
+      ) / hazardReports.length,
+    );
+    // Sort to make the highest confidence report primary
+    hazardReports.sort((a, b) => getPollutionSignalConfidence(b.data) - getPollutionSignalConfidence(a.data));
+    const primaryReport = hazardReports[0].data;
+    const reportWithPhoto = hazardReports.find((r) => !!r.data.photoUrl);
+    const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
+    const promotionReason = `${hazardReports.length} citizen reports in the same H3 cell crossed the 20 min corroboration threshold.`;
+    
+    const baseValidation = primaryReport.validation;
+    const promotedValidation = baseValidation ? {
+      ...baseValidation,
+      alertReason: "Citizen-corroborated hotspot promoted from public signals to municipal review.",
+      alertTier: true,
+      citizenSignal: {
+        ...baseValidation.citizenSignal,
+        averageConfidence: avgConfidence,
+        reportCount: hazardReports.length,
+        windowMinutes: 20,
+      },
+      fusion: {
+        ...baseValidation.fusion,
+        finalConfidence: Math.min(99, baseValidation.fusion.finalConfidence + (hazardReports.length - 1) * 4),
+      },
+      promotionReason,
+    } : {
+      alertReason:
+        "Citizen-corroborated hotspot promoted from public signals to municipal review.",
+      alertTier: true,
+      citizenSignal: {
+        averageConfidence: avgConfidence,
+        reportCount: hazardReports.length,
+        windowMinutes: 20,
+      },
+      coverage: {
+        label: "Low station coverage",
+        level: "low",
+        nearestSensorKm: 3.2,
+      },
+      fusion: {
+        coverageAdjusted: true,
+        finalConfidence: Math.min(98, avgConfidence + 18),
+        h3CellId,
+        satelliteWeight: 0.2,
+        sensorWeight: 0.12,
+        visualWeight: 0.5,
+      },
+      promotionReason,
+      satellite: {
+        freshness: "stale" as const,
+        lastPassTime: "Yesterday 10:18",
+        signal: "Last Sentinel-5P pass not decisive; alert driven by citizen cluster.",
+        source: "Earth Engine" as const,
+      },
+      sensor: {
         pm25Delta: 8,
         source: "estimated" as const,
         trend: "rising" as const,
-      }),
-    },
-  };
+      },
+    };
 
-  await Promise.all(
-    allReports.map((report) =>
-      updateDoc(report.ref, {
+    await Promise.all(
+      hazardReports.map((report) =>
+        updateDoc(report.ref, {
+          status: "under_review",
+          validation: promotedValidation,
+        }),
+      ),
+    );
+
+    await setDoc(
+      doc(db, "incidents", `${h3CellId}-${hazardType}`),
+      {
+        aiConfidence: avgConfidence,
+        createdAt: serverTimestamp(),
+        geminiClassification: {
+          confidence: avgConfidence,
+          description: `Citizen-corroborated ${hazardType} hotspot`,
+          severity: getSeverity(avgConfidence),
+          type: primaryReport.geminiClassification?.type ?? hazardType,
+        },
+        h3CellId,
+        hazardLabel: primaryReport.hazardLabel ?? `Citizen ${hazardType} cluster`,
+        linkedReportIds: hazardReports.map((report) => report.id),
+        location: primaryReport.location ?? {
+          label: "Citizen report cluster",
+          lat: "28.6264",
+          lng: "77.3192",
+        },
+        photoUrl: bestPhotoUrl,
+        source: "citizen_cluster",
         status: "under_review",
+        updatedAt: serverTimestamp(),
         validation: promotedValidation,
-      }),
-    ),
-  );
-
-  await setDoc(
-    doc(db, "incidents", h3CellId),
-    {
-      aiConfidence: avgConfidence,
-      createdAt: serverTimestamp(),
-      geminiClassification: {
-        confidence: avgConfidence,
-        description: "Citizen-corroborated smoke hotspot",
-        severity: getSeverity(avgConfidence),
-        type: primaryReport.geminiClassification?.type ?? "fire",
       },
-      h3CellId,
-      hazardLabel: primaryReport.hazardLabel ?? "Citizen smoke cluster",
-      linkedReportIds: allReports.map((report) => report.id),
-      location: primaryReport.location ?? {
-        label: "Citizen report cluster",
-        lat: "28.6264",
-        lng: "77.3192",
-      },
-      photoUrl: bestPhotoUrl,
-      source: "citizen_cluster",
-      status: "under_review",
-      updatedAt: serverTimestamp(),
-      validation: promotedValidation,
-    },
-    { merge: true },
-  );
+      { merge: true },
+    );
+  }
 }
 
 export async function submitCitizenReport(report: ReportSubmissionInput) {
