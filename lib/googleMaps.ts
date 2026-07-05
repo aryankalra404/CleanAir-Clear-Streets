@@ -128,17 +128,23 @@ export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {
   }
 
   mapsWindow.cleanAirGoogleMapsPromises[promiseKey] = new Promise((resolve, reject) => {
+    const callbackName = `initMap_${promiseKey}_${Math.round(Math.random() * 1000000)}`;
+    (mapsWindow as any)[callbackName] = () => {
+      delete (mapsWindow as any)[callbackName];
+      resolve();
+    };
+
     const script = document.createElement("script");
     const params = new URLSearchParams({
       key: apiKey,
       v: "weekly",
       loading: "async",
+      callback: callbackName,
     });
     if (needsPlaces) params.set("libraries", "places");
     script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
     script.async = true;
     script.defer = true;
-    script.onload = () => resolve();
     script.onerror = () => reject(new Error("Google Maps failed to load."));
     document.head.appendChild(script);
   });

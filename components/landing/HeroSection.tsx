@@ -85,9 +85,6 @@ export default function HeroSection() {
           <Link href="/report" className="btn btn-primary">
             Report a Hotspot
           </Link>
-          <Link href="/dashboard" className="btn btn-secondary">
-            Open Command Center
-          </Link>
         </div>
 
         <div className="stats-grid" aria-label="Live city metrics">

@@ -2,9 +2,7 @@ import Link from "next/link";
 
   const navItems = [
     { href: "/", label: "Home" },
-    { href: "/report", label: "Report" },
     { href: "/map", label: "Map" },
-    { href: "/dashboard", label: "Command Center", featured: true },
   ];
 
 export default function Navbar() {
@@ -18,16 +16,18 @@ export default function Navbar() {
         </span>
       </Link>
 
-      <div className="nav-links">
+      <div className="nav-links" style={{ alignItems: "center" }}>
         {navItems.map((item) => (
           <Link
             href={item.href}
             key={item.href}
-            className={item.featured ? "nav-officials" : undefined}
           >
             {item.label}
           </Link>
         ))}
+        <Link href="/report" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.85rem', marginLeft: '8px' }}>
+          Report a Hotspot
+        </Link>
       </div>
     </nav>
   );

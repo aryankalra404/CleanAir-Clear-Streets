@@ -24,4 +24,7 @@ export const firebaseApp = isFirebaseConfigured
     : initializeApp(firebaseConfig)
   : null;
 
+import { getAuth } from "firebase/auth";
+
 export const db = firebaseApp ? getFirestore(firebaseApp) : null;
+export const auth = firebaseApp ? getAuth(firebaseApp) : null;
