@@ -80,6 +80,10 @@ export interface Incident {
   evidence?: IncidentEvidence;
   h3CellId?: string;
   linkedReportIds?: string[];
+  dispatchStatus?: "dispatched";
+  dispatchedAction?: string;
+  dispatchedAt?: string;
+  resolvedAt?: string;
 }
 
 export interface ForecastPoint {

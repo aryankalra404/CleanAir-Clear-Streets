@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
+import { collection, limit, onSnapshot, orderBy, query, doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import type { Incident, Source } from "@/lib/types";
 import {
   commandStats,
@@ -31,6 +31,12 @@ export default function CommandCenter() {
   const [liveAlertIncidents, setLiveAlertIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [source, setSource] = useState<Source | "all">("all");
+  const [toastMessage, setToastMessage] = useState("");
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(""), 3000);
+  };
 
   useEffect(() => {
     if (!isFirebaseConfigured || !db) return;
@@ -49,7 +55,8 @@ export default function CommandCenter() {
             id: reportDoc.id,
           }))
           .filter((report) => hasPollutionSignal(report.data))
-          .map((report) => reportToIncident(report.id, report.data)),
+          .map((report) => reportToIncident(report.id, report.data))
+          .filter((incident) => incident.status !== "resolved"),
       );
     });
   }, []);
@@ -65,9 +72,9 @@ export default function CommandCenter() {
 
     return onSnapshot(incidentsQuery, (snapshot) => {
       setLiveAlertIncidents(
-        snapshot.docs.map((doc) =>
-          reportToIncident(doc.id, doc.data() as FirestoreReport),
-        ),
+        snapshot.docs
+          .map((doc) => reportToIncident(doc.id, doc.data() as FirestoreReport))
+          .filter((incident) => incident.status !== "resolved"),
       );
     });
   }, []);
@@ -214,14 +221,26 @@ export default function CommandCenter() {
         />
       </div>
 
-      {selectedIncident ? (
-        isSelectedUnpromoted ? (
-          <UnverifiedSignalDetail incident={selectedIncident} />
+
+        {selectedIncident ? (
+          isSelectedUnpromoted ? (
+            <UnverifiedSignalDetail incident={selectedIncident} />
+          ) : (
+            <IncidentDetail 
+              incident={selectedIncident} 
+              onResolved={() => {
+                setSelectedId(null);
+                showToast("Incident marked resolved");
+              }} 
+            />
+          )
         ) : (
-          <IncidentDetail incident={selectedIncident} />
-        )
-      ) : (
-        <EmptyIncidentDetail />
+          <EmptyIncidentDetail />
+        )}
+      {toastMessage && (
+        <div style={{ position: 'fixed', bottom: '24px', right: '24px', background: '#101828', color: 'white', padding: '12px 24px', borderRadius: '8px', fontWeight: 700, boxShadow: '0 24px 60px rgba(16,24,40,0.16)', zIndex: 1000 }}>
+          {toastMessage}
+        </div>
       )}
     </section>
   );
@@ -275,7 +294,60 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
   );
 }
 
-function IncidentDetail({ incident }: { incident: Incident }) {
+function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolved: () => void }) {
+  const [showResolveModal, setShowResolveModal] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
+  const [resolveError, setResolveError] = useState("");
+  const [isDispatching, setIsDispatching] = useState(false);
+
+  const handleDispatch = async () => {
+    if (!db || incident.dispatchStatus === "dispatched") return;
+    setIsDispatching(true);
+    try {
+      const collectionName = incident.evidence?.alertTier ? "incidents" : "reports";
+      const docId = incident.id.replace("firestore-", "");
+      const actionLabel = getRecommendedAction(incident);
+      await updateDoc(doc(db, collectionName, docId), {
+        dispatchStatus: "dispatched",
+        dispatchedAction: actionLabel,
+        dispatchedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Failed to dispatch:", err);
+    } finally {
+      setIsDispatching(false);
+    }
+  };
+
+  const handleResolve = async () => {
+    if (!db) return;
+    setIsResolving(true);
+    setResolveError("");
+    try {
+      const incidentRef = doc(db, incident.id.replace("firestore-", "incidents/").includes("incidents/") ? incident.id.replace("firestore-", "incidents/") : `reports/${incident.id.replace("firestore-", "")}`);
+      // Note: for safety, since incidents can be in "incidents" or "reports" collection
+      const isPromoted = incident.id.includes("incidents/"); // Wait, reportToIncident sets id to `firestore-${id}`... Let me check how it gets promoted
+      // Actually, if it's promoted, it's in the incidents collection? But the hook reads from `reports` for incoming and `incidents` for alerts.
+      // Wait, let's just write to both or figure out which collection it belongs to.
+      // If the incident has `linkedReportIds` it might be from the `incidents` collection, but wait, reportToIncident takes `id` directly!
+      // Let's use `collectionName` logic: if incident.corroboratingReports > 1 or something? 
+      // Actually, `liveAlertIncidents` comes from "incidents" collection, `liveReports` comes from "reports".
+      // Let's just pass `isPromoted` or infer from `incident.evidence?.alertTier` which means it's in "incidents" collection.
+      const collectionName = incident.evidence?.alertTier ? "incidents" : "reports";
+      const docId = incident.id.replace("firestore-", "");
+      await updateDoc(doc(db, collectionName, docId), {
+        status: "resolved",
+        resolvedAt: serverTimestamp(),
+      });
+      setShowResolveModal(false);
+      onResolved();
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : "Failed to resolve incident");
+    } finally {
+      setIsResolving(false);
+    }
+  };
+
   const evidence = incident.evidence ?? null;
   const isAwaitingClassification = !evidence;
   const fallbackEvidence = evidence ?? buildIncidentEvidence(incident);
@@ -402,10 +474,35 @@ function IncidentDetail({ incident }: { incident: Incident }) {
       </div>
 
       <div className="dispatch-actions">
-        <button type="button">Deploy water cannon</button>
-        <button type="button">Dispatch cleanup crew</button>
-        <button type="button">Mark resolved</button>
+        <button 
+          type="button" 
+          className="primary-action" 
+          onClick={handleDispatch}
+          disabled={isDispatching || incident.dispatchStatus === "dispatched"}
+          style={incident.dispatchStatus === "dispatched" ? { background: '#117c72', opacity: 1 } : {}}
+        >
+          {incident.dispatchStatus === "dispatched" && incident.dispatchedAt 
+            ? `Dispatched at ${new Date(incident.dispatchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` 
+            : isDispatching ? "Dispatching..." : getRecommendedAction(incident)}
+        </button>
+        <button type="button" onClick={() => setShowResolveModal(true)}>Mark resolved</button>
       </div>
+
+      {showResolveModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: 'white', padding: '24px', borderRadius: '12px', width: '90%', maxWidth: '400px', boxShadow: '0 24px 60px rgba(16,24,40,0.16)', color: '#172033' }}>
+            <h3 style={{ margin: '0 0 8px', fontSize: '1.1rem', fontWeight: 850 }}>Mark this incident as resolved?</h3>
+            <p style={{ margin: 0, color: '#667085', fontSize: '0.9rem', lineHeight: 1.5 }}>This will remove it from active incident views but preserve it in the database for auditing.</p>
+            {resolveError && <p style={{ color: 'red', marginTop: '12px' }}>{resolveError}</p>}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
+              <button disabled={isResolving} onClick={() => setShowResolveModal(false)} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #d8e1da', background: 'white', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              <button disabled={isResolving} onClick={handleResolve} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #0f172a', background: '#0f172a', color: 'white', fontWeight: 700, cursor: 'pointer' }}>
+                {isResolving ? "Resolving..." : "Confirm Resolve"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

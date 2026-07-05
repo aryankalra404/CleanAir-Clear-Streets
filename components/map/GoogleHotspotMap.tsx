@@ -252,7 +252,7 @@ export default function GoogleHotspotMap({
     });
 
     // Pass 2 — spread clusters that share the same cell symmetrically around the base point
-    const SPREAD_RADIUS = 0.004; // ~440 m at Delhi latitude — clearly separate at city zoom
+    const SPREAD_RADIUS = 0.0003; // ~33 m — subtle shift visible only when zoomed in
     cellGroups.forEach((groupIds) => {
       const total = groupIds.length;
       if (total <= 1) return; // single cluster: no jitter needed

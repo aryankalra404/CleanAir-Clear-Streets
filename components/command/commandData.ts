@@ -2,10 +2,10 @@ import { mockForecasts, mockLiveStats } from "@/lib/mockData";
 import type { Incident } from "@/lib/types";
 
 const actionByHazard: Record<Incident["hazardType"], string> = {
-  fire: "Deploy water-mist cannon",
-  smog: "Send traffic enforcement team",
-  dust: "Dispatch dust-control crew",
-  industrial: "Send inspection unit",
+  fire: "Dispatch fire/cleanup crew",
+  smog: "Issue traffic advisory",
+  dust: "Deploy water-mist cannon",
+  industrial: "Notify pollution control board",
 };
 
 export const commandStats = [

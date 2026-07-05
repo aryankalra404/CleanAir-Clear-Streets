@@ -32,6 +32,10 @@ export interface FirestoreReport {
   photoUrl?: string;
   h3CellId?: string;
   linkedReportIds?: string[];
+  dispatchStatus?: "dispatched";
+  dispatchedAction?: string;
+  dispatchedAt?: Timestamp;
+  resolvedAt?: Timestamp;
 }
 
 function normalizeStatus(status?: FirestoreReport["status"]): IncidentStatus {
@@ -132,11 +136,15 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     source: "citizen",
     status: normalizeStatus(report.status),
     timestamp:
-      report.updatedAt?.toDate().toISOString() ??
       report.createdAt?.toDate().toISOString() ??
+      report.updatedAt?.toDate().toISOString() ??
       new Date().toISOString(),
     h3CellId: report.h3CellId,
     linkedReportIds: report.linkedReportIds,
+    dispatchStatus: report.dispatchStatus,
+    dispatchedAction: report.dispatchedAction,
+    dispatchedAt: report.dispatchedAt?.toDate().toISOString(),
+    resolvedAt: report.resolvedAt?.toDate().toISOString(),
   };
   return incident;
 }
