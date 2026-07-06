@@ -9,6 +9,7 @@ import Navbar from "@/components/shared/Navbar";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, type FirestoreReport } from "@/lib/firestoreReports";
 import { submitCitizenReport } from "@/lib/reportSubmissions";
+import { useT } from "@/lib/languageContext";
 
 type SubmitState = "idle" | "submitting" | "submitted" | "error";
 type ClassificationFeedback =
@@ -93,6 +94,7 @@ async function uploadPhotoToImgBB(dataUrl: string, fileName: string) {
 }
 
 export default function ReportPortal() {
+  const t = useT();
   const [selectedTag, setSelectedTag] = useState(hazardTags[0].id);
   const [anonymous, setAnonymous] = useState(true);
   const [location, setLocation] = useState(defaultLocation);
@@ -249,12 +251,10 @@ export default function ReportPortal() {
         <div className="app-page-content">
           <header className="public-map-header" style={{ marginBottom: "24px" }}>
             <div>
-              <p className="eyebrow">Public intake</p>
-              <h1>Report pollution hotspots.</h1>
+              <p className="eyebrow">{t("report_eyebrow")}</p>
+              <h1>{t("report_title")}</h1>
               <p>
-                Upload a photo, tag what you see, and share location context.
-                CleanAir Command validates the report with AI, local sensors, and
-                satellite signals before alerting municipal responders.
+                {t("report_description")}
               </p>
             </div>
           </header>
@@ -277,13 +277,13 @@ export default function ReportPortal() {
               />
               {!photoPreviewUrl ? (
                 <label htmlFor="pollution-photo">
-                  <span>Upload photo</span>
+                  <span>{t("report_form_upload_photo")}</span>
                   <strong>
                     {isPreparingPhoto
                       ? "Uploading photo for Gemini screening"
-                      : "Open camera or choose image"}
+                      : t("report_form_open_camera")}
                   </strong>
-                  <small>Smoke, dust, flame, or visible haze works best.</small>
+                  <small>{t("report_form_what_seeing_hint")}</small>
                 </label>
               ) : (
                 <div className="uploaded-evidence-card">
@@ -296,9 +296,9 @@ export default function ReportPortal() {
                         ? "Ready for Gemini screening"
                         : "Securing evidence image"}
                     </strong>
-                    <small>Stored as a hosted URL before the report is saved.</small>
+                    <small>{t("report_what_happens_step1")}</small>
                     <div className="uploaded-evidence-actions">
-                      <label htmlFor="pollution-photo">Change photo</label>
+                      <label htmlFor="pollution-photo">{t("report_form_change_photo")}</label>
                       <button onClick={handleRemovePhoto} type="button">
                         Remove
                       </button>
@@ -309,7 +309,7 @@ export default function ReportPortal() {
             </div>
 
             <fieldset className="tag-fieldset">
-              <legend>What are you seeing?</legend>
+              <legend>{t("report_form_what_seeing")}</legend>
               <div className="tag-grid">
                 {hazardTags.map((tag) => (
                   <button
@@ -318,8 +318,8 @@ export default function ReportPortal() {
                     onClick={() => setSelectedTag(tag.id)}
                     type="button"
                   >
-                    <strong>{tag.label}</strong>
-                    <span>{tag.description}</span>
+                    <strong>{t(tag.label)}</strong>
+                    <span>{t(tag.description)}</span>
                   </button>
                 ))}
               </div>
@@ -328,11 +328,11 @@ export default function ReportPortal() {
             <ReportLocationPicker value={location} onChange={setLocation} />
 
             <label className="note-field">
-              Optional note or voice transcript
+              {t("report_form_note_label")}
               <textarea
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
-                placeholder="Example: black smoke from garbage pile near service road, strong smell, visible since 8:30 AM"
+                placeholder={t("report_form_hint_example")}
                 rows={4}
               />
             </label>
@@ -343,7 +343,7 @@ export default function ReportPortal() {
                 onChange={(event) => setAnonymous(event.target.checked)}
                 type="checkbox"
               />
-              Submit anonymously
+              {t("report_form_submit_anonymous")}
             </label>
 
             <button
@@ -354,18 +354,18 @@ export default function ReportPortal() {
               {isPreparingPhoto
                 ? "Uploading photo..."
                 : submitState === "submitting"
-                  ? "Submitting..."
-                  : "Submit Report"}
+                  ? t("report_form_submitting")
+                  : t("report_form_submit_button")}
             </button>
           </form>
 
           <aside className="report-side-panel">
             <div className="report-flow-card">
-              <h2>What happens next</h2>
+              <h2>{t("report_what_happens_title")}</h2>
               <ol>
-                <li>Photo is classified for smoke, dust, fire, or emission.</li>
-                <li>Location is matched with sensors and known risk zones.</li>
-                <li>Verified hotspots are pushed to the municipal dashboard.</li>
+                <li>{t("report_what_happens_step3")}</li>
+                <li>{t("report_what_happens_step2")}</li>
+                <li>{t("report_what_happens_step4")}</li>
               </ol>
             </div>
 
@@ -403,7 +403,7 @@ export default function ReportPortal() {
                     {classificationFeedback.message}
                   </small>
                 )}
-                <Link href="/map">See nearby hotspots</Link>
+                <Link href="/map">{t("report_form_see_nearby")}</Link>
               </div>
             )}
 

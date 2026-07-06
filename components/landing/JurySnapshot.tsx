@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import { techStack } from "@/components/landing/landingData";
+import { useT } from "@/lib/languageContext";
 
 const routeCards = [
   {
@@ -26,12 +29,14 @@ const routeCards = [
 ];
 
 export default function JurySnapshot() {
+  const t = useT();
+
   return (
     <section className="snapshot-section">
       <div className="snapshot-container">
         <div>
-          <p className="eyebrow">Jury snapshot</p>
-          <h2>Built for citizens to report and officials to act.</h2>
+          <p className="eyebrow">{t("jury_snapshot_eyebrow")}</p>
+          <h2>{t("jury_snapshot_title")}</h2>
           <div className="tech-stack">
             {techStack.map((tech) => (
               <span key={tech}>{tech}</span>

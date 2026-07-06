@@ -20,6 +20,7 @@ import {
   type GoogleMapsApi,
 } from "@/lib/googleMaps";
 import type { Incident, Severity } from "@/lib/types";
+import { useT } from "@/lib/languageContext";
 
 declare global {
   interface Window {
@@ -176,6 +177,7 @@ export default function GoogleHotspotMap({
   showHeader = true,
   showSidebar = true,
 }: GoogleHotspotMapProps = {}) {
+  const t = useT();
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRefs = useRef<Record<string, GoogleMapMarker>>({});
@@ -448,23 +450,23 @@ export default function GoogleHotspotMap({
       content = `
         <div class="google-map-infowindow unverified-tooltip" style="padding: 4px; text-align: center;">
           <strong style="display: block; margin-bottom: 4px;">${selectedIncident.neighborhood}</strong>
-          <span style="color: #64748b; font-size: 13px;">${reportCount} citizen report${reportCount > 1 ? "s" : ""} · awaiting corroboration</span>
+          <span style="color: #64748b; font-size: 13px;">${reportCount === 1 ? t("map_citizen_report_single") : t("map_citizen_reports").replace("{count}", reportCount.toString())} · ${t("map_awaiting_corroboration")}</span>
         </div>
       `;
     } else if (!isPromoted && mode !== "operations") {
       content = `
         <div class="google-map-infowindow" style="padding: 4px;">
           <strong style="display: block; margin-bottom: 4px;">${selectedIncident.neighborhood}</strong>
-          <span style="color: #64748b; font-size: 13px;">${selectedIncident.hazardType} · ${reportCount} reported</span>
+          <span style="color: #64748b; font-size: 13px;">${t("hazard_" + selectedIncident.hazardType) || selectedIncident.hazardType} · ${reportCount} ${t("map_reported")}</span>
         </div>
       `;
     } else {
       content = `
         <div class="google-map-infowindow">
           <strong>${selectedIncident.neighborhood}</strong>
-          <span>${selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% confidence</span>
-          ${reportCount > 1 ? `<span>${reportCount} citizen reports</span>` : ""}
-          ${mode === "operations" ? `<span>${evidenceSummary.count} evidence source${evidenceSummary.count === 1 ? "" : "s"} · ${evidenceSummary.label}</span>` : ""}
+          <span>${t("hazard_" + selectedIncident.hazardType) || selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% ${t("map_confidence")}</span>
+          ${reportCount > 1 ? `<span>${t("map_citizen_reports").replace("{count}", reportCount.toString())}</span>` : ""}
+          ${mode === "operations" ? `<span>${evidenceSummary.count === 1 ? t("map_evidence_source_single") : t("map_evidence_sources").replace("{count}", evidenceSummary.count.toString())} · ${evidenceSummary.label}</span>` : ""}
         </div>
       `;
     }
@@ -481,15 +483,15 @@ export default function GoogleHotspotMap({
       {showHeader && (
         <div className="public-map-header">
           <div>
-            <p className="eyebrow">Public map</p>
-            <h1>Live pollution hotspots</h1>
+            <p className="eyebrow">{t("map_eyebrow")}</p>
+            <h1>{t("map_title")}</h1>
             <p>
-              Verified reports, sensor flags, and predicted risk zones across Delhi NCR.
+              {t("map_description")}
             </p>
           </div>
           <div className="map-status-card">
-            <span>{incidents.length} visible</span>
-            <strong>Google Maps layer</strong>
+            <span>{incidents.length} {t("map_layer_visible")}</span>
+            <strong>{t("map_layer_label")}</strong>
           </div>
         </div>
       )}
@@ -520,14 +522,14 @@ export default function GoogleHotspotMap({
         {showSidebar && (
           <aside className="public-map-sidebar">
             <div className="map-sidebar-header">
-              <p>Hotspot feed</p>
-              <span>Live</span>
+              <p>{t("map_feed_title")}</p>
+              <span>{t("map_feed_live")}</span>
             </div>
             <div className="map-incident-list">
               {clusters.length === 0 ? (
                 <div className="incident-empty-state compact">
-                  <strong>No live hotspots yet</strong>
-                  <span>Citizen reports with pollution signals will appear here after classification.</span>
+                  <strong>{t("map_feed_empty_title")}</strong>
+                  <span>{t("map_feed_empty_desc")}</span>
                 </div>
               ) : clusters.map((cluster) => {
                 const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
@@ -551,9 +553,9 @@ export default function GoogleHotspotMap({
                         {primaryIncident.neighborhood}
                       </strong>
                       <small>
-                        {reportCount > 1 ? `${reportCount} reports · ` : ""}
-                        {primaryIncident.hazardType} · {formatStatus(primaryIncident.status)} ·{" "}
-                        {primaryIncident.evidence?.alertTier ? "alert-tier" : "public signal"}
+                        {reportCount > 1 ? `${reportCount === 1 ? t("map_report_count_single").replace("{count}", "1") : t("map_reports_count").replace("{count}", reportCount.toString())} · ` : ""}
+                        {t("hazard_" + primaryIncident.hazardType) || primaryIncident.hazardType} · {t("status_" + primaryIncident.status) || formatStatus(primaryIncident.status)} ·{" "}
+                        {primaryIncident.evidence?.alertTier ? t("map_alert_tier") : t("map_public_signal")}
                       </small>
                     </span>
                   </button>

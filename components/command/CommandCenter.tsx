@@ -1,5 +1,7 @@
 "use client";
 
+import { useT } from "@/lib/languageContext";
+
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query, doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import type { Incident, Source } from "@/lib/types";
@@ -27,6 +29,7 @@ const sourceFilters: Array<{ id: Source | "all"; label: string }> = [
 ];
 
 export default function CommandCenter() {
+  const t = useT();
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [liveAlertIncidents, setLiveAlertIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -107,25 +110,29 @@ export default function CommandCenter() {
         if (stat.label === "Active incidents") {
           return {
             ...stat,
+            label: t("command_stat_active"),
+            detail: t("command_stat_active_detail"),
             value: incidents.filter((incident) => incident.status !== "resolved").length,
           };
         }
         if (stat.label === "Critical") {
           return {
             ...stat,
+            label: t("command_stat_critical"),
+            detail: t("command_stat_critical_detail"),
             value: incidents.filter((incident) => incident.severity === "critical")
               .length,
           };
         }
         if (stat.label === "Avg response") {
-          return { ...stat, value: "—" };
+          return { ...stat, label: t("command_stat_avg_response"), detail: t("command_stat_avg_response_detail"), value: "—" };
         }
         if (stat.label === "Peak risk") {
-          return { ...stat, value: "—", detail: "Awaiting forecast data" };
+          return { ...stat, label: t("command_stat_peak_risk"), value: "—", detail: t("hero_stat_awaiting_forecast") };
         }
         return stat;
       }),
-    [incidents],
+    [incidents, t],
   );
 
   return (
@@ -143,8 +150,8 @@ export default function CommandCenter() {
       <aside className="incident-queue-panel">
         <div className="command-panel-header">
           <div>
-            <p>Incident feed</p>
-            <h2>Response priority</h2>
+            <p>{t("command_feed_title")}</p>
+            <h2>{t("command_detail_priority")}</h2>
           </div>
           <span>{filteredIncidents.length} active</span>
         </div>
@@ -157,7 +164,10 @@ export default function CommandCenter() {
               onClick={() => setSource(filter.id)}
               type="button"
             >
-              {filter.label}
+              {filter.id === "all" ? t("source_filter_all") : 
+               filter.id === "citizen" ? t("source_filter_citizen") : 
+               filter.id === "sensor" ? t("source_filter_sensor") : 
+               t("source_filter_satellite")}
             </button>
           ))}
         </div>
@@ -165,10 +175,9 @@ export default function CommandCenter() {
         <div className="incident-queue-list">
           {filteredIncidents.length === 0 ? (
             <div className="incident-empty-state">
-              <strong>No live incidents yet</strong>
+              <strong>{t("command_feed_empty_title")}</strong>
               <span>
-                Promoted Firestore incidents will appear here as soon as the
-                corroboration threshold is crossed.
+                {t("command_signals_empty_desc")}
               </span>
             </div>
           ) : filteredIncidents.map((incident) => (
@@ -188,25 +197,25 @@ export default function CommandCenter() {
                   {incident.neighborhood}
                 </strong>
                 <small>
-                  {incident.hazardType} · {incident.source} ·{" "}
-                  {incident.aiConfidence}% confidence
+                  {t("hazard_" + incident.hazardType)} · {incident.source === "citizen" ? t("source_filter_citizen") : incident.source === "sensor" ? t("source_filter_sensor") : t("source_filter_satellite")} ·{" "}
+                  {incident.aiConfidence}% {t("map_confidence")}
                 </small>
               </span>
               <span className={`queue-status ${incident.status}`}>
-                {formatStatus(incident.status)}
+                {t("status_" + incident.status) || formatStatus(incident.status)}
               </span>
             </button>
           ))}
         </div>
 
-        <IncomingSignals signals={incomingSignals} />
+        <IncomingSignals signals={incomingSignals} t={t} />
       </aside>
 
       <div className="command-map-panel">
         <div className="command-panel-header">
           <div>
-            <p>Operational map</p>
-            <h2>Delhi NCR hotspot layer</h2>
+            <p>{t("command_detail_map_title")}</p>
+            <h2>{t("command_detail_map_layer")}</h2>
           </div>
           <span>{filteredIncidents.length + incomingSignals.length} mapped</span>
         </div>
@@ -224,10 +233,11 @@ export default function CommandCenter() {
 
         {selectedIncident ? (
           isSelectedUnpromoted ? (
-            <UnverifiedSignalDetail incident={selectedIncident} />
+            <UnverifiedSignalDetail incident={selectedIncident} t={t} />
           ) : (
             <IncidentDetail 
               incident={selectedIncident} 
+              t={t}
               onResolved={() => {
                 setSelectedId(null);
                 showToast("Incident marked resolved");
@@ -235,7 +245,7 @@ export default function CommandCenter() {
             />
           )
         ) : (
-          <EmptyIncidentDetail />
+          <EmptyIncidentDetail t={t} />
         )}
       {toastMessage && (
         <div style={{ position: 'fixed', bottom: '24px', right: '24px', background: '#101828', color: 'white', padding: '12px 24px', borderRadius: '8px', fontWeight: 700, boxShadow: '0 24px 60px rgba(16,24,40,0.16)', zIndex: 1000 }}>
@@ -246,7 +256,7 @@ export default function CommandCenter() {
   );
 }
 
-function IncomingSignals({ signals }: { signals: Incident[] }) {
+function IncomingSignals({ signals, t }: { signals: Incident[], t: any }) {
   const groupedSignals = useMemo(() => {
     const groupMap = new Map<string, { primary: Incident; count: number }>();
     signals.forEach((signal) => {
@@ -266,12 +276,12 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
   return (
     <div className="incoming-signals-panel">
       <div>
-        <p>Incoming signals</p>
+        <p>{t("command_signals_title")}</p>
         <span>{groupedSignals.length} unverified</span>
       </div>
 
       {groupedSignals.length === 0 ? (
-        <small>No raw citizen reports waiting for corroboration.</small>
+        <small>{t("command_signals_empty_title")}</small>
       ) : (
         <ul>
           {groupedSignals.slice(0, 3).map((group) => {
@@ -294,7 +304,7 @@ function IncomingSignals({ signals }: { signals: Incident[] }) {
   );
 }
 
-function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolved: () => void }) {
+function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onResolved: () => void, t: any }) {
   const [showResolveModal, setShowResolveModal] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const [resolveError, setResolveError] = useState("");
@@ -372,11 +382,11 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
     <aside className="incident-detail-panel">
       <div className="command-panel-header">
         <div>
-          <p>Incident detail</p>
+          <p>{t("command_detail_title")}</p>
           <h2>{incident.neighborhood}</h2>
         </div>
         <span className={`detail-severity ${incident.severity}`}>
-          {incident.severity}
+          {t("severity_" + incident.severity) || incident.severity}
         </span>
       </div>
 
@@ -385,7 +395,7 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
           className={`evidence-visual ${incident.hazardType}`}
           style={incident.photoUrl ? { backgroundImage: `url(${incident.photoUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
         >
-          {!incident.photoUrl && <span>{incident.hazardType}</span>}
+          {!incident.photoUrl && <span>{t("hazard_" + incident.hazardType)}</span>}
         </div>
         <div className="evidence-meta">
           <span>Age: {getIncidentAge(incident.timestamp)}</span>
@@ -395,14 +405,14 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
       </div>
 
       <div className="ai-analysis-card">
-        <p>Gemini multimodal analysis</p>
+        <p>{t("command_detail_evidence_ai")}</p>
         {isAwaitingClassification ? (
           <>
-            <h3>Awaiting classification</h3>
+            <h3>{t("command_detail_status_awaiting_class")}</h3>
             <div className="analysis-meter pending">
               <span style={{ width: "18%" }} />
             </div>
-            <small>Fusion confidence will appear after Gemini, CPCB, and satellite evidence are written to Firestore.</small>
+            <small>{t("command_detail_unverified_desc2")}</small>
           </>
         ) : (
           <>
@@ -422,11 +432,11 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
       </div>
 
       <div className="evidence-trail-card">
-        <p>Coverage-aware evidence trail</p>
+        <p>{t("command_detail_evidence_title")}</p>
         {isAwaitingClassification ? (
           <div className="evidence-awaiting-state">
-            <strong>Awaiting classification...</strong>
-            <span>Live Firestore report has not received validation evidence yet.</span>
+            <strong>{t("command_detail_status_awaiting_class")}</strong>
+            <span>{t("command_detail_unverified_desc1")}</span>
           </div>
         ) : (
           <>
@@ -436,14 +446,14 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
             </div>
             <ul>
               <li>
-                <span>Citizen corroboration</span>
+                <span>{t("command_detail_evidence_citizen")}</span>
                 <strong>
                   {fallbackEvidence.citizenSignal.reportCount} reports /{" "}
                   {fallbackEvidence.citizenSignal.windowMinutes} min
                 </strong>
               </li>
               <li>
-                <span>Nearest station</span>
+                <span>{t("command_detail_nearest_station")}</span>
                 <strong>{fallbackEvidence.coverage.nearestSensorKm.toFixed(1)} km</strong>
               </li>
               <li>
@@ -453,7 +463,7 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
                 </strong>
               </li>
               <li>
-                <span>Satellite context</span>
+                <span>{t("command_detail_evidence_satellite")}</span>
                 <strong>
                   {fallbackEvidence.satellite.freshness} · {fallbackEvidence.satellite.lastPassTime}
                 </strong>
@@ -465,11 +475,10 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
       </div>
 
       <div className="recommended-action-card">
-        <p>Recommended action</p>
+        <p>{t("command_detail_recommended_action")}</p>
         <h3>{getRecommendedAction(incident)}</h3>
         <span>
-          Dispatch based on severity, confidence, local exposure, and forecasted
-          spread.
+          {t("command_feed_description")}
         </span>
       </div>
 
@@ -485,14 +494,14 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
             ? `Dispatched at ${new Date(incident.dispatchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` 
             : isDispatching ? "Dispatching..." : getRecommendedAction(incident)}
         </button>
-        <button type="button" onClick={() => setShowResolveModal(true)}>Mark resolved</button>
+        <button type="button" onClick={() => setShowResolveModal(true)}>{t("command_detail_resolve_button")}</button>
       </div>
 
       {showResolveModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
           <div style={{ background: 'white', padding: '24px', borderRadius: '12px', width: '90%', maxWidth: '400px', boxShadow: '0 24px 60px rgba(16,24,40,0.16)', color: '#172033' }}>
-            <h3 style={{ margin: '0 0 8px', fontSize: '1.1rem', fontWeight: 850 }}>Mark this incident as resolved?</h3>
-            <p style={{ margin: 0, color: '#667085', fontSize: '0.9rem', lineHeight: 1.5 }}>This will remove it from active incident views but preserve it in the database for auditing.</p>
+            <h3 style={{ margin: '0 0 8px', fontSize: '1.1rem', fontWeight: 850 }}>{t("command_detail_resolve_confirm_title")}</h3>
+            <p style={{ margin: 0, color: '#667085', fontSize: '0.9rem', lineHeight: 1.5 }}>{t("command_detail_resolve_confirm_desc")}</p>
             {resolveError && <p style={{ color: 'red', marginTop: '12px' }}>{resolveError}</p>}
             <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
               <button disabled={isResolving} onClick={() => setShowResolveModal(false)} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #d8e1da', background: 'white', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
@@ -507,36 +516,36 @@ function IncidentDetail({ incident, onResolved }: { incident: Incident; onResolv
   );
 }
 
-function EmptyIncidentDetail() {
+function EmptyIncidentDetail({ t }: { t: any }) {
   return (
     <aside className="incident-detail-panel">
       <div className="command-panel-header">
         <div>
-          <p>Incident detail</p>
-          <h2>No live incident selected</h2>
+          <p>{t("command_detail_title")}</p>
+          <h2>{t("command_detail_empty")}</h2>
         </div>
       </div>
       <div className="evidence-awaiting-state">
-        <strong>No live incidents yet</strong>
-        <span>Turn on demo incidents to preview the dashboard with sample data.</span>
+        <strong>{t("command_feed_empty_title")}</strong>
+        <span>{t("command_feed_empty_desc")}</span>
       </div>
     </aside>
   );
 }
 
-function UnverifiedSignalDetail({ incident }: { incident: Incident }) {
+function UnverifiedSignalDetail({ incident, t }: { incident: Incident, t: any }) {
   const reports = incident.corroboratingReports ?? 1;
   return (
     <aside className="incident-detail-panel">
       <div className="command-panel-header">
         <div>
-          <p>Unverified signal</p>
+          <p>{t("command_detail_unverified_title")}</p>
           <h2>{incident.neighborhood}</h2>
         </div>
         <span className="detail-severity low">Pending</span>
       </div>
       <div className="evidence-awaiting-state">
-        <strong>Awaiting corroboration</strong>
+        <strong>{t("command_detail_status_awaiting_corrob")}</strong>
         <span>
           {reports} citizen report{reports > 1 ? "s" : ""} received. Waiting for the promotion threshold (3 reports) or sensor/satellite confirmation before municipal escalation.
         </span>

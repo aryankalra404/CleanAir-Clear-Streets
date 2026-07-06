@@ -6,13 +6,16 @@ import { auth } from "@/lib/firebase";
 import CommandCenterTabs from "@/components/shared/CommandCenterTabs";
 import CommandCenter from "@/components/command/CommandCenter";
 import Navbar from "@/components/shared/Navbar";
+import { useT } from "@/lib/languageContext";
 
 export default function DashboardPage() {
+  const t = useT();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
   useEffect(() => {
     if (!auth) {
@@ -30,10 +33,13 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!auth) return;
     setError("");
+    setIsSigningIn(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (err: any) {
       setError("Invalid email or password.");
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -48,7 +54,7 @@ export default function DashboardPage() {
           <Navbar />
         </div>
         <div className="app-page-container app-page-content" style={{ display: "flex", justifyContent: "center", padding: "100px 0" }}>
-          <p>Loading workspace...</p>
+          <p>{t("dashboard_loading")}</p>
         </div>
       </main>
     );
@@ -62,10 +68,10 @@ export default function DashboardPage() {
         </div>
         <div className="app-page-container app-page-content" style={{ display: "flex", justifyContent: "center", padding: "80px 0" }}>
           <div style={{ background: "white", padding: "32px", borderRadius: "12px", width: "100%", maxWidth: "380px", boxShadow: "0 4px 20px rgba(0,0,0,0.06)", border: "1px solid var(--line)" }}>
-            <h2 style={{ margin: "0 0 24px", fontSize: "1.4rem", fontWeight: 800 }}>Command Center Login</h2>
+            <h2 style={{ margin: "0 0 24px", fontSize: "1.4rem", fontWeight: 800 }}>{t("dashboard_login_title")}</h2>
             <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <label style={{ fontSize: "0.85rem", fontWeight: 650, color: "var(--ink)" }}>Email Address</label>
+                <label style={{ fontSize: "0.85rem", fontWeight: 650, color: "var(--ink)" }}>{t("dashboard_login_email")}</label>
                 <input 
                   type="email" 
                   value={email} 
@@ -76,7 +82,7 @@ export default function DashboardPage() {
                 />
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <label style={{ fontSize: "0.85rem", fontWeight: 650, color: "var(--ink)" }}>Password</label>
+                <label style={{ fontSize: "0.85rem", fontWeight: 650, color: "var(--ink)" }}>{t("dashboard_login_password")}</label>
                 <input 
                   type="password" 
                   value={password} 
@@ -86,8 +92,8 @@ export default function DashboardPage() {
                 />
               </div>
               {error && <p style={{ color: "#d92d20", fontSize: "0.85rem", margin: 0, fontWeight: 500 }}>{error}</p>}
-              <button type="submit" className="btn btn-primary" style={{ width: "100%", marginTop: "8px", padding: "12px", fontSize: "1rem" }}>
-                Sign In
+              <button type="submit" disabled={isSigningIn} className="btn btn-primary" style={{ width: "100%", marginTop: "8px", padding: "12px", fontSize: "1rem" }}>
+                {isSigningIn ? t("dashboard_login_signing_in") : t("dashboard_login_button")}
               </button>
             </form>
           </div>
@@ -104,11 +110,10 @@ export default function DashboardPage() {
       <div className="app-page-container app-page-content">
         <div className="command-hero-row">
           <div className="command-header">
-            <p className="eyebrow">Municipal workspace</p>
-            <h1>Command Center</h1>
+            <p className="eyebrow">{t("dashboard_login_subtitle")}</p>
+            <h1>{t("dashboard_eyebrow")}</h1>
             <p>
-              Live hotspot verification, dispatch decisions, and escalation
-              tracking across Delhi NCR.
+              {t("dashboard_description")}
             </p>
           </div>
 
@@ -117,7 +122,7 @@ export default function DashboardPage() {
               onClick={handleSignOut} 
               style={{ background: "transparent", border: "none", color: "var(--muted)", textDecoration: "underline", cursor: "pointer", fontSize: "0.9rem", fontWeight: 600, padding: 0 }}
             >
-              Sign out
+              {t("nav_sign_out")}
             </button>
             <CommandCenterTabs active="incidents" />
           </div>

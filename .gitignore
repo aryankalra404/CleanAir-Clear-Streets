@@ -1,5 +1,3 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 /node_modules
 /.pnp
@@ -42,3 +40,22 @@ credentials/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# air quality data
+/ml/station_hour.csv
+/ml/delhi_historical_snapshots.csv
+/ml/*.csv
+
+# virtual environment
+.venv
+
+# python cache
+__pycache__/
+*.py[cod]
+
+# pnpm store
+/.pnpm-store
+
+# uploaded / generated public assets
+/public/banner.jpg
+/public/uploads/

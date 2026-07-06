@@ -9,6 +9,7 @@ import {
   type GoogleMapMarker,
   type GooglePlaceAutocomplete,
 } from "@/lib/googleMaps";
+import { useT } from "@/lib/languageContext";
 
 export interface ReportLocationValue {
   label: string;
@@ -86,6 +87,7 @@ export default function ReportLocationPicker({
   onChange,
   value,
 }: ReportLocationPickerProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
@@ -296,23 +298,23 @@ export default function ReportLocationPicker({
   return (
     <div className="location-picker-card">
       <div className="location-picker-row">
-        <label htmlFor="report-location">Location</label>
+        <label htmlFor="report-location">{t("location_picker_label")}</label>
         <div className="location-picker-actions">
           <button type="button" onClick={handleDetectLocation}>
-            Detect my location
+            {t("location_picker_detect")}
           </button>
           <button
             aria-pressed={mapEnabled}
             type="button"
             onClick={() => setMapEnabled(true)}
           >
-            Use map picker
+            {t("location_picker_map")}
           </button>
         </div>
       </div>
 
       <input
-        defaultValue={value.label}
+        value={value.label === "default_location_label" ? t("default_location_label") : value.label}
         id="report-location"
         onChange={(event) =>
           onChange({
@@ -320,7 +322,7 @@ export default function ReportLocationPicker({
             label: event.target.value,
           })
         }
-        placeholder="Search a Delhi NCR place or landmark"
+        placeholder={t("location_picker_search")}
         ref={inputRef}
       />
 
@@ -341,9 +343,9 @@ export default function ReportLocationPicker({
       )}
 
       <div className="location-picker-meta">
-        <small>{helperText}</small>
+        <small>{t("report_form_use_gps")}</small>
         <span>
-          {value.lat}, {value.lng}
+          {value.lat.toString().substring(0, 9)}, {value.lng.toString().substring(0, 9)}
         </span>
       </div>
     </div>

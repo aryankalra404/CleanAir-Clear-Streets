@@ -1,36 +1,36 @@
 export const hazardTags = [
   {
     id: "garbage-fire",
-    label: "Garbage fire",
-    description: "Smoke or flames near waste piles",
+    label: "hazard_garbage_fire_label",
+    description: "hazard_garbage_fire_desc",
     confidence: 78,
     result: "Likely garbage fire",
   },
   {
     id: "traffic-smog",
-    label: "Traffic smog",
-    description: "Dense fumes at a road junction",
+    label: "hazard_traffic_smog_label",
+    description: "hazard_traffic_smog_desc",
     confidence: 71,
     result: "Likely traffic smog trap",
   },
   {
     id: "construction-dust",
-    label: "Construction dust",
-    description: "Dust plume from digging or debris",
+    label: "hazard_construction_dust_label",
+    description: "hazard_construction_dust_desc",
     confidence: 74,
     result: "Likely construction dust",
   },
   {
     id: "industrial-emission",
-    label: "Industrial emission",
-    description: "Stack smoke, odor, or chemical haze",
+    label: "hazard_industrial_emission_label",
+    description: "hazard_industrial_emission_desc",
     confidence: 82,
     result: "Likely industrial emission",
   },
 ];
 
 export const defaultLocation = {
-  label: "Ghazipur Landfill, East Delhi",
+  label: "default_location_label",
   lat: "28.623981",
   lng: "77.315869",
 };

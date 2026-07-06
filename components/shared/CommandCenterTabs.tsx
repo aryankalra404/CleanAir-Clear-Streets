@@ -1,25 +1,30 @@
+"use client";
+
 import Link from "next/link";
+import { useT } from "@/lib/languageContext";
 
 type CommandCenterTabsProps = {
   active: "incidents" | "forecast";
 };
 
-const tabs = [
-  {
-    href: "/dashboard",
-    id: "incidents",
-    label: "Live incidents",
-    description: "Detect, verify, and dispatch",
-  },
-  {
-    href: "/forecast",
-    id: "forecast",
-    label: "24-hour forecast",
-    description: "Predict spikes and stage teams",
-  },
-] as const;
-
 export default function CommandCenterTabs({ active }: CommandCenterTabsProps) {
+  const t = useT();
+
+  const tabs = [
+    {
+      href: "/dashboard",
+      id: "incidents",
+      label: t("tabs_incidents"),
+      description: t("tabs_incidents_desc"),
+    },
+    {
+      href: "/forecast",
+      id: "forecast",
+      label: t("tabs_forecast"),
+      description: t("tabs_forecast_desc"),
+    },
+  ] as const;
+
   return (
     <div className="command-tabs" aria-label="Command Center views">
       {tabs.map((tab) => (
