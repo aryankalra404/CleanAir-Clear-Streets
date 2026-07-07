@@ -123,32 +123,24 @@ a {
 
 .brand-mark {
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   place-items: center;
-  border-radius: 7px;
-  background: var(--night);
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--teal), #0a4f46);
   color: white;
-  font-size: 0.875rem;
+  font-size: 1.1rem;
   font-weight: 850;
+  box-shadow: 0 4px 12px rgba(17, 124, 114, 0.2);
 }
 
-.brand-kicker {
-  display: block;
-  color: #667085;
-  font-size: 0.68rem;
-  font-weight: 850;
-  letter-spacing: 0.16em;
-  line-height: 1.1;
-  text-transform: uppercase;
-}
-
+.brand-kicker,
 .brand-name {
-  display: block;
   color: var(--ink);
-  font-size: 1rem;
+  font-size: 1.15rem;
   font-weight: 850;
   line-height: 1.05;
+  letter-spacing: -0.02em;
 }
 
 .nav-links {
@@ -339,9 +331,9 @@ a {
   max-width: 520px;
   justify-self: end;
   overflow: hidden;
-  border: 1px solid #2d3a4f;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--night);
+  background: white;
   box-shadow: var(--shadow-lg);
 }
 
@@ -3272,6 +3264,89 @@ a {
 @media (max-width: 480px) {
   .forecast-metrics-row {
     grid-template-columns: 1fr;
+  }
+}
+
+
+/* --- Footer --- */
+.gov-footer {
+  background-color: var(--ink);
+  color: #fff;
+  padding: 64px 24px 32px;
+}
+
+.footer-container {
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.footer-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  margin-bottom: 64px;
+}
+
+.footer-brand h2 {
+  font-size: 1.5rem;
+  font-weight: 850;
+  line-height: 1.1;
+  color: #fff;
+  margin-bottom: 16px;
+  letter-spacing: -0.02em;
+}
+
+.gov-affiliation {
+  font-size: 0.95rem;
+  color: #94a3b8;
+  line-height: 1.5;
+  max-width: 400px;
+}
+
+.footer-links {
+  display: flex;
+  gap: 64px;
+  justify-content: flex-end;
+}
+
+.footer-nav-column h3 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--teal);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 20px;
+}
+
+.footer-nav-column a {
+  display: block;
+  color: #cbd5e1;
+  text-decoration: none;
+  margin-bottom: 12px;
+  font-size: 0.95rem;
+  transition: color 0.2s ease;
+}
+
+.footer-nav-column a:hover {
+  color: #fff;
+}
+
+.footer-bottom {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 24px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+@media (max-width: 768px) {
+  .footer-top {
+    grid-template-columns: 1fr;
+  }
+  .footer-links {
+    justify-content: flex-start;
+    flex-direction: column;
+    gap: 32px;
   }
 }
 

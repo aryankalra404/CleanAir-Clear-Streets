@@ -107,7 +107,7 @@ export default function LanguageSelector() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 850, color: "var(--ink)" }}>Choose your language</h2>
-                <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "var(--muted)" }}>Select a language for the CleanAir Command interface.</p>
+                <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "var(--muted)" }}>Select a language for the SwachhVayu interface.</p>
               </div>
               <button
                 onClick={() => setIsOpen(false)}

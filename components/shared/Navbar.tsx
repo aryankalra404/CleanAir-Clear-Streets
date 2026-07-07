@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useT } from "@/lib/languageContext";
 
 export default function Navbar() {
@@ -13,11 +14,11 @@ export default function Navbar() {
 
   return (
     <nav className="site-nav" aria-label="Primary navigation">
-      <Link href="/" className="brand-lockup" aria-label="CleanAir Command home">
-        <span className="brand-mark">CA</span>
-        <span>
-          <span className="brand-kicker">{t("nav_brand_kicker")}</span>
-          <span className="brand-name">{t("nav_brand_name")}</span>
+      <Link href="/" className="brand-lockup" aria-label="SwachhVayu home">
+        <Image src="/logo.png" alt="SwachhVayu Logo" width={40} height={40} className="brand-mark" style={{ objectFit: 'contain', background: 'transparent', boxShadow: 'none' }} />
+        <span className="brand-name" style={{ fontSize: '1.2rem', display: 'flex' }}>
+          <span style={{ fontWeight: 500 }}>{t("nav_brand_kicker")}</span>
+          <span style={{ fontWeight: 850 }}>{t("nav_brand_name")}</span>
         </span>
       </Link>
 

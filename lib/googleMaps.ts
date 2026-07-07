@@ -101,6 +101,7 @@ export function getGoogleMapsWindow(): GoogleMapsWindow {
     console.warn = (...args) => {
       if (typeof args[0] === "string" && args[0].includes("google.maps.places.Autocomplete is not available to new customers")) return;
       if (typeof args[0] === "string" && args[0].includes("As of March 1st, 2025")) return;
+      if (typeof args[0] === "string" && args[0].includes("google.maps.Marker is deprecated")) return;
       originalWarn.apply(console, args);
     };
   }

@@ -70,10 +70,6 @@ export default function HeroSection() {
   return (
     <div className="hero-layout">
       <div className="hero-copy">
-        <div className="live-pill" suppressHydrationWarning>
-          <span />
-          {t("hero_live_data_feed").replace("{time}", new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}
-        </div>
 
         <h1>{t("hero_title")}</h1>
 
@@ -81,9 +77,12 @@ export default function HeroSection() {
           {t("hero_description")}
         </p>
 
-        <div className="hero-actions">
+        <div className="hero-actions" style={{ display: 'flex', gap: '16px' }}>
           <Link href="/report" className="btn btn-primary">
             {t("hero_report_button")}
+          </Link>
+          <Link href="/map" className="btn btn-outline">
+            Explore live map
           </Link>
         </div>
 

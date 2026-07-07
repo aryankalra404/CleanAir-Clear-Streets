@@ -38,11 +38,13 @@ export default function HotspotPreview({ priorityIncidents, criticalCount }: { p
           styles: [
             { featureType: "poi", stylers: [{ visibility: "off" }] },
             { featureType: "transit", stylers: [{ visibility: "off" }] },
-            { featureType: "road", elementType: "geometry", stylers: [{ color: "#2d3748" }] },
-            { featureType: "water", elementType: "geometry", stylers: [{ color: "#1a202c" }] },
-            { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#2a4365" }] },
-            { elementType: "labels.text.fill", stylers: [{ color: "#a0aec0" }] },
-            { elementType: "labels.text.stroke", stylers: [{ color: "#1a202c" }] },
+            { featureType: "water", elementType: "geometry", stylers: [{ color: "#e9e9e9" }] },
+            { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
+            { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+            { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca3af" }] },
+            { featureType: "road", elementType: "labels.text.stroke", stylers: [{ color: "#ffffff" }] },
+            { elementType: "labels.text.fill", stylers: [{ color: "#6b7280" }] },
+            { elementType: "labels.text.stroke", stylers: [{ color: "#ffffff", weight: 2 }] },
           ],
         });
 
@@ -81,54 +83,18 @@ export default function HotspotPreview({ priorityIncidents, criticalCount }: { p
   }, [mapLoaded, priorityIncidents]);
 
   return (
-    <aside className="hotspot-panel" aria-label="Live hotspot preview" style={{ display: 'flex', flexDirection: 'column' }}>
-      <div className="panel-header">
-        <div>
-          <p>{t("hotspot_preview_eyebrow")}</p>
-          <h2>{t("hotspot_preview_location")}</h2>
-        </div>
-        <span>{criticalCount} critical</span>
-      </div>
-
-      <div className="map-preview" style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: '360px', padding: 0 }}>
+    <aside className="hotspot-panel" aria-label="Live hotspot preview" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      <div className="map-preview" style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: '400px', padding: 0 }}>
         {/* Google Map Container */}
         <div 
           ref={mapNodeRef} 
-          style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, backgroundColor: '#1a202c' }} 
+          style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, backgroundColor: '#f4f5f1' }} 
         />
-        
-        {/* Overlay overlay to make it look embedded/darker */}
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'radial-gradient(circle at center, transparent 40%, rgba(15, 23, 42, 0.4) 100%)' }} />
 
-        {/* Priority Card Overlay */}
-        <div className="priority-card" style={{ position: 'absolute', bottom: '16px', left: '16px', right: '16px', zIndex: 10 }}>
-          <div className="priority-card-header">
-            <span>{t("hotspot_preview_priority_incidents")}</span>
-            <Link href="/map">{t("hotspot_preview_view_map")}</Link>
-          </div>
-
-          <div className="incident-list">
-            {priorityIncidents.length === 0 ? (
-              <div style={{ padding: '16px', color: '#94a3b8', fontSize: '0.88rem', textAlign: 'center', lineHeight: 1.5 }}>
-                {t("hotspot_preview_no_alerts")}
-              </div>
-            ) : (
-              priorityIncidents.map((incident) => (
-                <article className="incident-row" key={incident.id}>
-                  <div>
-                    <h3>{incident.neighborhood}</h3>
-                    <p>
-                      {t("hazard_" + incident.hazardType) || incident.hazardType} · {incident.source} ·{" "}
-                      {incident.aiConfidence}% confidence
-                    </p>
-                  </div>
-                  <span className={`severity-badge ${incident.severity}`}>
-                    {incident.severity}
-                  </span>
-                </article>
-              ))
-            )}
-          </div>
+        {/* Clean floating header */}
+        <div style={{ position: 'absolute', top: '16px', left: '16px', zIndex: 10, display: 'flex', alignItems: 'center', gap: '8px', background: 'white', padding: '8px 16px', borderRadius: '24px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', border: '1px solid rgba(0,0,0,0.05)' }}>
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', boxShadow: '0 0 8px rgba(16, 185, 129, 0.4)' }} />
+          <span style={{ color: 'var(--ink)', fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Recent Reports</span>
         </div>
       </div>
     </aside>

@@ -1,6 +1,6 @@
 import HeroSection from "@/components/landing/HeroSection";
 import HowItWorks from "@/components/landing/HowItWorks";
-import JurySnapshot from "@/components/landing/JurySnapshot";
+import Footer from "@/components/shared/Footer";
 import Navbar from "@/components/shared/Navbar";
 
 export default function Hero() {
@@ -14,7 +14,7 @@ export default function Hero() {
         </div>
       </section>
       <HowItWorks />
-      <JurySnapshot />
+      <Footer />
     </main>
   );
 }

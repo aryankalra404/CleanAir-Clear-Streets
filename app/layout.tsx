@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CleanAir Command",
+  title: "SwachhVayu",
   description:
     "Neighbourhood pollution hotspot detection and response dashboard.",
 };
