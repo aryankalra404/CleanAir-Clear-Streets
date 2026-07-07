@@ -6,18 +6,26 @@ async function loadEN(): Promise<Record<string, string>> {
   return mod.default as Record<string, string>;
 }
 
-async function fetchTranslations(target: string, values: string[]): Promise<string[]> {
-  const res = await fetch("/api/translate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ texts: values, target }),
-  });
-  if (!res.ok) throw new Error("Translation API failed");
-  const data = await res.json() as { translations: string[] };
-  return data.translations;
+async function loadLocaleFile(lang: string): Promise<Record<string, string>> {
+  // Dynamic import of the static pre-built locale file.
+  // These files are generated once by `node scripts/generate-locales.js`
+  // and committed to the repo. No API calls happen at runtime.
+  switch (lang) {
+    case "hi": return (await import("../locales/hi.json")).default as Record<string, string>;
+    case "ta": return (await import("../locales/ta.json")).default as Record<string, string>;
+    case "te": return (await import("../locales/te.json")).default as Record<string, string>;
+    case "kn": return (await import("../locales/kn.json")).default as Record<string, string>;
+    case "ml": return (await import("../locales/ml.json")).default as Record<string, string>;
+    case "mr": return (await import("../locales/mr.json")).default as Record<string, string>;
+    case "bn": return (await import("../locales/bn.json")).default as Record<string, string>;
+    case "gu": return (await import("../locales/gu.json")).default as Record<string, string>;
+    case "pa": return (await import("../locales/pa.json")).default as Record<string, string>;
+    case "ur": return (await import("../locales/ur.json")).default as Record<string, string>;
+    case "or": return (await import("../locales/or.json")).default as Record<string, string>;
+    case "as": return (await import("../locales/as.json")).default as Record<string, string>;
+    default:   return loadEN();
+  }
 }
-
-function storageKey(lang: string) { return `translations_${lang}`; }
 
 interface LanguageContextValue {
   locale: string;
@@ -39,49 +47,34 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const enRef = useRef<Record<string, string>>({});
 
-  // Load English base on mount
+  // Load English base on mount, then restore saved language
   useEffect(() => {
-    loadEN().then((en) => {
+    loadEN().then(async (en) => {
       enRef.current = en;
-      // Restore persisted language
-      const saved = typeof window !== "undefined" ? localStorage.getItem("preferred_locale") || "en" : "en";
+      const saved = typeof window !== "undefined"
+        ? localStorage.getItem("preferred_locale") || "en"
+        : "en";
       if (saved !== "en") {
         setLocaleState(saved);
-        loadLocale(saved, en);
+        await applyLocale(saved);
       } else {
         setTranslations(en);
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadLocale = useCallback(async (lang: string, en: Record<string, string>) => {
+  const applyLocale = useCallback(async (lang: string) => {
     if (lang === "en") {
-      setTranslations(en);
+      setTranslations(enRef.current);
       return;
     }
-    const cached = localStorage.getItem(storageKey(lang));
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Object.keys(parsed).length === Object.keys(en).length) {
-          setTranslations(parsed);
-          return;
-        }
-      } catch {}
-    }
-    // Fetch from Google Translate
     setLoading(true);
     try {
-      const keys = Object.keys(en);
-      const values = Object.values(en);
-      const translated = await fetchTranslations(lang, values);
-      const map: Record<string, string> = {};
-      keys.forEach((k, i) => { map[k] = translated[i] ?? values[i]; });
-      localStorage.setItem(storageKey(lang), JSON.stringify(map));
-      setTranslations(map);
+      const localeData = await loadLocaleFile(lang);
+      setTranslations(localeData);
     } catch {
-      // Fallback to English on error
-      setTranslations(en);
+      // Fallback to English if the file fails to load
+      setTranslations(enRef.current);
     } finally {
       setLoading(false);
     }
@@ -90,11 +83,10 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const setLocale = useCallback((lang: string) => {
     setLocaleState(lang);
     localStorage.setItem("preferred_locale", lang);
-    // Update dir for RTL languages
     document.documentElement.lang = lang;
     document.documentElement.dir = lang === "ur" ? "rtl" : "ltr";
-    loadLocale(lang, enRef.current);
-  }, [loadLocale]);
+    applyLocale(lang);
+  }, [applyLocale]);
 
   const t = useCallback((key: string): string => {
     return translations[key] ?? enRef.current[key] ?? key;
