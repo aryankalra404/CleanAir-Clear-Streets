@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useT } from "@/lib/languageContext";
-import LanguageSelector from "./LanguageSelector";
 
 export default function Navbar() {
   const t = useT();
@@ -31,10 +30,9 @@ export default function Navbar() {
             {item.label}
           </Link>
         ))}
-        <Link href="/report" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.85rem', marginInlineStart: '8px', marginInlineEnd: '16px' }}>
+        <Link href="/report" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.85rem', marginInlineStart: '8px' }}>
           {t("nav_report_button")}
         </Link>
-        <LanguageSelector />
       </div>
     </nav>
   );
