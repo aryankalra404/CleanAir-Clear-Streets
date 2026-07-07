@@ -50,7 +50,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <main className="app-page-shell">
-        <div className="app-page-container">
+        <div className="app-page-container" style={{ zIndex: 100 }}>
           <Navbar />
         </div>
         <div className="app-page-container app-page-content" style={{ display: "flex", justifyContent: "center", padding: "100px 0" }}>
@@ -63,7 +63,7 @@ export default function DashboardPage() {
   if (!user) {
     return (
       <main className="app-page-shell">
-        <div className="app-page-container">
+        <div className="app-page-container" style={{ zIndex: 100 }}>
           <Navbar />
         </div>
         <div className="app-page-container app-page-content" style={{ display: "flex", justifyContent: "center", padding: "80px 0" }}>
@@ -104,7 +104,7 @@ export default function DashboardPage() {
 
   return (
     <main className="app-page-shell">
-      <div className="app-page-container">
+      <div className="app-page-container" style={{ zIndex: 100 }}>
         <Navbar />
       </div>
       <div className="app-page-container app-page-content">

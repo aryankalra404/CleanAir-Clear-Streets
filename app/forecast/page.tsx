@@ -195,7 +195,7 @@ export default function ForecastPage() {
 
   return (
     <main className="app-page-shell">
-      <div className="app-page-container">
+      <div className="app-page-container" style={{ zIndex: 100 }}>
         <Navbar />
       </div>
 

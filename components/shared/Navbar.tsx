@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useState } from "react";
 import { useT } from "@/lib/languageContext";
+import LanguageSelector from "@/components/shared/LanguageSelector";
 
 export default function Navbar() {
   const t = useT();
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const navItems = [
     { href: "/", label: t("nav_home") },
@@ -22,18 +25,28 @@ export default function Navbar() {
         </span>
       </Link>
 
-      <div className="nav-links" style={{ alignItems: "center" }}>
+      <button 
+        className="hamburger-btn" 
+        onClick={() => setIsMenuOpen(!isMenuOpen)}
+        aria-label="Toggle menu"
+      >
+        {isMenuOpen ? '✕' : '☰'}
+      </button>
+
+      <div className={`nav-links ${isMenuOpen ? 'open' : ''}`} style={{ alignItems: "center" }}>
         {navItems.map((item) => (
           <Link
             href={item.href}
             key={item.href}
+            onClick={() => setIsMenuOpen(false)}
           >
             {item.label}
           </Link>
         ))}
-        <Link href="/report" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.85rem', marginInlineStart: '8px' }}>
+        <Link href="/report" className="btn btn-primary" onClick={() => setIsMenuOpen(false)} style={{ padding: '8px 16px', fontSize: '0.85rem', marginInlineStart: '8px' }}>
           {t("nav_report_button")}
         </Link>
+        <LanguageSelector />
       </div>
     </nav>
   );

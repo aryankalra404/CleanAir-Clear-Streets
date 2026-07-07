@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useLanguage } from "@/lib/languageContext";
 
 const LANGUAGES = [
@@ -22,6 +23,11 @@ const LANGUAGES = [
 export default function LanguageSelector() {
   const { locale, setLocale, loading } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <>
@@ -29,29 +35,16 @@ export default function LanguageSelector() {
         onClick={() => setIsOpen(true)}
         aria-label="Select Language"
         style={{
-          position: "fixed",
-          bottom: "24px",
-          right: "24px",
-          zIndex: 900,
           display: "flex",
           alignItems: "center",
-          gap: "8px",
-          background: "var(--surface)",
+          gap: "6px",
+          background: "transparent",
           border: "1px solid var(--line)",
-          boxShadow: "var(--shadow-md)",
           cursor: "pointer",
-          padding: "10px 16px",
+          padding: "6px 12px",
           borderRadius: "999px",
-          transition: "transform 0.2s, box-shadow 0.2s",
           opacity: loading ? 0.5 : 1,
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = "translateY(-2px)";
-          e.currentTarget.style.boxShadow = "var(--shadow-lg)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = "translateY(0)";
-          e.currentTarget.style.boxShadow = "var(--shadow-md)";
+          marginInlineStart: "4px",
         }}
       >
         <svg
@@ -74,7 +67,7 @@ export default function LanguageSelector() {
         </span>
       </button>
 
-      {isOpen && (
+      {isOpen && mounted && createPortal(
         <div
           style={{
             position: "fixed",
@@ -167,7 +160,8 @@ export default function LanguageSelector() {
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <style dangerouslySetInnerHTML={{__html: `

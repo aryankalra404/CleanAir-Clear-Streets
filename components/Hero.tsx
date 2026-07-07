@@ -8,7 +8,7 @@ export default function Hero() {
     <main className="landing-page">
       <section className="landing-hero">
         <div className="landing-grid-bg" />
-        <div className="landing-container">
+        <div className="landing-container" style={{ zIndex: 100 }}>
           <Navbar />
           <HeroSection />
         </div>
