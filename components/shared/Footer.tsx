@@ -21,7 +21,7 @@ export default function Footer() {
             </Link>
             <h2>{t("jury_snapshot_title")}</h2>
             <p className="gov-affiliation">
-              An official initiative by the Ministry of Environment, Forest and Climate Change.
+              An official initiative by the government of India.
             </p>
           </div>
           
@@ -30,7 +30,6 @@ export default function Footer() {
               <h3>Resources</h3>
               <Link href="/map">Live Map</Link>
               <Link href="/report">Report Hotspot</Link>
-              <Link href="/dashboard">Command Center</Link>
             </div>
             <div className="footer-nav-column">
               <h3>Policies</h3>

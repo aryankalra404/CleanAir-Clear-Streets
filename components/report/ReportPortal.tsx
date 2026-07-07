@@ -280,7 +280,7 @@ export default function ReportPortal() {
                   <span>{t("report_form_upload_photo")}</span>
                   <strong>
                     {isPreparingPhoto
-                      ? "Uploading photo for Gemini screening"
+                      ? "Uploading photo..."
                       : t("report_form_open_camera")}
                   </strong>
                   <small>{t("report_form_what_seeing_hint")}</small>
@@ -293,8 +293,8 @@ export default function ReportPortal() {
                     <span>{photoUrl ? "Photo uploaded" : "Uploading photo"}</span>
                     <strong>
                       {photoUrl
-                        ? "Ready for Gemini screening"
-                        : "Securing evidence image"}
+                        ? "Ready to submit"
+                        : "Please wait..."}
                     </strong>
                     <small>{t("report_what_happens_step1")}</small>
                     <div className="uploaded-evidence-actions">

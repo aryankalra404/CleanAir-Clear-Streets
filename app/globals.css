@@ -159,12 +159,12 @@ a {
   white-space: nowrap;
 }
 
-.nav-links a {
+.nav-links a:not(.btn) {
   border-radius: 7px;
   padding: 8px 12px;
 }
 
-.nav-links a:hover {
+.nav-links a:not(.btn):hover {
   background: #f1f5f3;
 }
 
@@ -3127,6 +3127,7 @@ a {
 }
 
 /* ── Confidence pills ────────────────────────────────────────────────────── */
+
 .forecast-conf-pill {
   display: inline-block;
   text-align: center;
