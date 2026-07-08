@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import Link from "next/link";
 import { defaultLocation, hazardTags } from "@/components/report/reportData";
@@ -9,7 +9,24 @@ import Navbar from "@/components/shared/Navbar";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, type FirestoreReport } from "@/lib/firestoreReports";
 import { submitCitizenReport } from "@/lib/reportSubmissions";
-import { useT } from "@/lib/languageContext";
+import { useLanguage, useT } from "@/lib/languageContext";
+
+// Google Cloud Speech-to-Text language codes, keyed by our locale codes.
+const SPEECH_LOCALE_MAP: Record<string, string> = {
+  as: "as-IN",
+  bn: "bn-IN",
+  en: "en-IN",
+  gu: "gu-IN",
+  hi: "hi-IN",
+  kn: "kn-IN",
+  ml: "ml-IN",
+  mr: "mr-IN",
+  or: "or-IN",
+  pa: "pa-IN",
+  ta: "ta-IN",
+  te: "te-IN",
+  ur: "ur-IN",
+};
 
 type SubmitState = "idle" | "submitting" | "submitted" | "error";
 type ClassificationFeedback =
@@ -22,6 +39,13 @@ type ClassificationFeedback =
 const MAX_SOURCE_IMAGE_BYTES = 6_000_000;
 const MAX_UPLOAD_IMAGE_CHARS = 620_000;
 const COMPRESSED_IMAGE_MAX_EDGE = 960;
+
+// Voice input: how long a pause has to last before we auto-stop recording.
+const SILENCE_STOP_MS = 1600;
+// RMS volume (0-1) below which audio counts as "silence".
+const SILENCE_VOLUME_THRESHOLD = 0.02;
+// Ignore silence detection for the first moment, so pausing to think doesn't cut it off instantly.
+const SILENCE_GRACE_MS = 700;
 
 function loadImage(dataUrl: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -93,8 +117,41 @@ async function uploadPhotoToImgBB(dataUrl: string, fileName: string) {
   return payload.imageUrl;
 }
 
+function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Could not read that recording."));
+      }
+    };
+    reader.onerror = () => reject(new Error("Could not read that recording."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function transcribeAudio(blob: Blob, languageCode: string, sampleRateHertz: number) {
+  if (blob.size < 4000) {
+    throw new Error("That recording was too short to transcribe. Hold the button and speak clearly.");
+  }
+  const audio = await blobToBase64(blob);
+  const response = await fetch("/api/speech-to-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audio, languageCode, sampleRateHertz }),
+  });
+  const payload = (await response.json()) as { error?: string; transcript?: string };
+  if (!response.ok || !payload.transcript) {
+    throw new Error(payload.error ?? "Could not transcribe that recording.");
+  }
+  return payload.transcript;
+}
+
 export default function ReportPortal() {
   const t = useT();
+  const { locale } = useLanguage();
   const [selectedTag, setSelectedTag] = useState(hazardTags[0].id);
   const [anonymous, setAnonymous] = useState(true);
   const [location, setLocation] = useState(defaultLocation);
@@ -108,6 +165,10 @@ export default function ReportPortal() {
   const [classificationFeedback, setClassificationFeedback] =
     useState<ClassificationFeedback>(null);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceError, setVoiceError] = useState("");
+  const recordingCleanupRef = useRef<(() => void) | null>(null);
 
   const selectedHazard = useMemo(
     () => hazardTags.find((tag) => tag.id === selectedTag) ?? hazardTags[0],
@@ -198,6 +259,106 @@ export default function ReportPortal() {
     setSubmitError("");
     setSubmitState("idle");
   }
+
+  async function handleStartRecording() {
+    setVoiceError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setVoiceError("Voice input is not supported in this browser.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      const chunks: BlobPart[] = [];
+
+      const AudioContextCtor =
+        window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const audioContext = new AudioContextCtor();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      const volumeData = new Uint8Array(analyser.frequencyBinCount);
+
+      let silenceStartedAt: number | null = null;
+      let animationFrame = 0;
+      const recordingStartedAt = Date.now();
+      let stopped = false;
+
+      const stopEverything = () => {
+        if (stopped) return;
+        stopped = true;
+        cancelAnimationFrame(animationFrame);
+        if (recorder.state !== "inactive") recorder.stop();
+        audioContext.close().catch(() => {});
+      };
+
+      const watchVolume = () => {
+        analyser.getByteTimeDomainData(volumeData);
+        let sumSquares = 0;
+        for (const value of volumeData) {
+          const normalized = value / 128 - 1;
+          sumSquares += normalized * normalized;
+        }
+        const rms = Math.sqrt(sumSquares / volumeData.length);
+        const elapsed = Date.now() - recordingStartedAt;
+
+        if (elapsed > SILENCE_GRACE_MS) {
+          if (rms < SILENCE_VOLUME_THRESHOLD) {
+            if (silenceStartedAt === null) silenceStartedAt = Date.now();
+            else if (Date.now() - silenceStartedAt >= SILENCE_STOP_MS) {
+              stopEverything();
+              return;
+            }
+          } else {
+            silenceStartedAt = null;
+          }
+        }
+
+        animationFrame = requestAnimationFrame(watchVolume);
+      };
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onstop = async () => {
+        cancelAnimationFrame(animationFrame);
+        stream.getTracks().forEach((track) => track.stop());
+        const recordedSampleRate = audioContext.sampleRate;
+        audioContext.close().catch(() => {});
+        recordingCleanupRef.current = null;
+        setIsRecording(false);
+        setIsTranscribing(true);
+        try {
+          const blob = new Blob(chunks, { type: "audio/webm;codecs=opus" });
+          const languageCode = SPEECH_LOCALE_MAP[locale] ?? "en-IN";
+          const transcript = await transcribeAudio(blob, languageCode, recordedSampleRate);
+          setNote((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        } catch (error) {
+          setVoiceError(error instanceof Error ? error.message : "Could not transcribe that recording.");
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      recordingCleanupRef.current = stopEverything;
+      recorder.start();
+      animationFrame = requestAnimationFrame(watchVolume);
+      setIsRecording(true);
+    } catch {
+      setVoiceError("Could not access the microphone. Check permissions and try again.");
+    }
+  }
+
+  function handleStopRecording() {
+    recordingCleanupRef.current?.();
+  }
+
+  useEffect(() => {
+    return () => recordingCleanupRef.current?.();
+  }, []);
 
   async function handleSubmit() {
     setSubmitState("submitting");
@@ -328,13 +489,47 @@ export default function ReportPortal() {
             <ReportLocationPicker value={location} onChange={setLocation} />
 
             <label className="note-field">
-              {t("report_form_note_label")}
+              <span className="note-field-label-row">
+                <span>{t("report_form_note_label")}</span>
+                <button
+                  className={isRecording ? "voice-input-btn recording" : "voice-input-btn"}
+                  disabled={isTranscribing}
+                  onClick={isRecording ? handleStopRecording : handleStartRecording}
+                  type="button"
+                >
+                  {isRecording ? (
+                    <>
+                      <span className="voice-input-dot" aria-hidden="true" />
+                      Listening…
+                    </>
+                  ) : isTranscribing ? (
+                    <>
+                      <span className="voice-input-spinner" aria-hidden="true" />
+                      Transcribing…
+                    </>
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                        <path
+                          fill="currentColor"
+                          d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"
+                        />
+                      </svg>
+                      Speak
+                    </>
+                  )}
+                </button>
+              </span>
               <textarea
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 placeholder={t("report_form_hint_example")}
                 rows={4}
               />
+              {isRecording && (
+                <small className="voice-input-hint">Stops automatically when you pause.</small>
+              )}
+              {voiceError && <small className="voice-input-error">{voiceError}</small>}
             </label>
 
             <label className="anonymous-toggle">

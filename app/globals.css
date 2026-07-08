@@ -2081,6 +2081,84 @@ a {
   padding: 14px;
 }
 
+.note-field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.voice-input-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: white;
+  color: #344054;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.voice-input-btn:hover:not(:disabled) {
+  border-color: #14b8a6;
+  color: #0f766e;
+}
+
+.voice-input-btn.recording {
+  border-color: #f04438;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.voice-input-btn:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.voice-input-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f04438;
+  animation: voice-dot-pulse 1s ease-in-out infinite;
+}
+
+.voice-input-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(52, 64, 84, 0.25);
+  border-top-color: #344054;
+  animation: voice-spin 0.7s linear infinite;
+}
+
+.voice-input-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.voice-input-error {
+  display: block;
+  margin-top: 6px;
+  color: #b42318;
+  font-weight: 600;
+}
+
+@keyframes voice-dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.6); opacity: 0.5; }
+}
+
+@keyframes voice-spin {
+  to { transform: rotate(360deg); }
+}
+
 .location-card input,
 .note-field textarea {
   width: 100%;
@@ -3413,4 +3491,3 @@ a {
     gap: 32px;
   }
 }
-
