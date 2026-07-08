@@ -19,7 +19,7 @@ import {
   type FirestoreReport,
 } from "@/lib/firestoreReports";
 import { buildIncidentEvidence } from "@/lib/incidentEvidence";
-import { TIER_LABELS, TIER_RANK } from "@/lib/supportEvidence";
+import { TIER_LABELS, priorityRank } from "@/lib/supportEvidence";
 import { latLngToCell } from "h3-js";
 
 type CommandTab = "priority" | "citizen_reported" | "auto_detected";
@@ -100,14 +100,28 @@ export default function CommandCenter() {
     [liveReports],
   );
 
-  // "incidents" collection = anything that has cleared a promotion tier,
-  // sorted strongest evidence first (sensor+satellite > crowd > single-channel > detection-only).
+  // "incidents" collection = anything that has cleared a promotion tier.
+  // Priority order (see priorityRank in lib/supportEvidence for the full
+  // rationale):
+  //   1. sensor + satellite confirmed
+  //   2. crowd-verified with overwhelming report count (5+)
+  //   3. citizen + sensor confirmed
+  //   4. citizen + satellite confirmed
+  //   5. crowd-verified, baseline (3-4 reports)
+  //   6. sensor-detected only
+  //   7. satellite-detected only
+  // Ties within the same rank fall back to report count (more first), then
+  // most-recently-updated first.
   const priorityIncidents = useMemo(
     () =>
       [...liveAlertIncidents].sort((a, b) => {
-        const rankA = a.evidence?.tier ? TIER_RANK[a.evidence.tier] : 99;
-        const rankB = b.evidence?.tier ? TIER_RANK[b.evidence.tier] : 99;
-        return rankA - rankB;
+        const reportsA = a.evidence?.citizenSignal?.reportCount ?? 0;
+        const reportsB = b.evidence?.citizenSignal?.reportCount ?? 0;
+        const rankA = priorityRank(a.evidence?.tier, reportsA);
+        const rankB = priorityRank(b.evidence?.tier, reportsB);
+        if (rankA !== rankB) return rankA - rankB;
+        if (reportsB !== reportsA) return reportsB - reportsA;
+        return 0;
       }),
     [liveAlertIncidents],
   );

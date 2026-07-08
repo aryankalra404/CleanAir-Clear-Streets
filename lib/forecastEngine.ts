@@ -31,6 +31,15 @@ export interface SensorReading {
   wind_dir_deg?: number | null;
 }
 
+export interface ForecastCell {
+  h3CellId: string;
+  label: string;
+  labelKey: string;
+  lat: number;
+  lng: number;
+  bigQueryLabel?: string;
+}
+
 export interface HourlyForecastPoint {
   hour: string; // e.g. "14:00"
   predicted_pm25: number;
@@ -412,19 +421,13 @@ export function generateMockHistory(
 
 // ─── Known Delhi H3 cells (resolution 7) for demo ────────────────────────────
 
-export const DELHI_H3_CELLS: Array<{
-  h3CellId: string;
-  label: string;
-  labelKey: string;
-  lat: number;
-  lng: number;
-}> = [
-  { h3CellId: "872a100edffffff", labelKey: "cell_anand_vihar", label: "Anand Vihar", lat: 28.6469, lng: 77.3152 },
-  { h3CellId: "872a1072dffffff", labelKey: "cell_ito_crossing", label: "ITO Crossing", lat: 28.6292, lng: 77.2410 },
-  { h3CellId: "872a1014dffffff", labelKey: "cell_ghazipur_landfill", label: "Ghazipur Landfill", lat: 28.6264, lng: 77.3192 },
-  { h3CellId: "872a1073dffffff", labelKey: "cell_bawana_industrial", label: "Bawana Industrial", lat: 28.8039, lng: 77.0469 },
-  { h3CellId: "872a1071dffffff", labelKey: "cell_dwarka_sector_21", label: "Dwarka Sector 21", lat: 28.5859, lng: 77.0718 },
-  { h3CellId: "872a1078dffffff", labelKey: "cell_bhalswa_landfill", label: "Bhalswa Landfill", lat: 28.7427, lng: 77.1636 },
-  { h3CellId: "872a100cdffffff", labelKey: "cell_connaught_place", label: "Connaught Place", lat: 28.6315, lng: 77.2167 },
-  { h3CellId: "872a107adffffff", labelKey: "cell_rohini_sector_8", label: "Rohini Sector 8", lat: 28.7495, lng: 77.1100 },
+export const DELHI_H3_CELLS: ForecastCell[] = [
+  { h3CellId: "872a100edffffff", labelKey: "cell_anand_vihar", label: "Anand Vihar", bigQueryLabel: "Anand Vihar, Delhi - DPCC", lat: 28.6469, lng: 77.3152 },
+  { h3CellId: "872a1072dffffff", labelKey: "cell_ito_crossing", label: "ITO Crossing", bigQueryLabel: "ITO, Delhi - CPCB", lat: 28.6292, lng: 77.2410 },
+  { h3CellId: "872a1014dffffff", labelKey: "cell_ghazipur_landfill", label: "Patparganj, Delhi - DPCC", lat: 28.6264, lng: 77.3192 },
+  { h3CellId: "872a1073dffffff", labelKey: "cell_bawana_industrial", label: "Bawana Industrial", bigQueryLabel: "Bawana, Delhi - DPCC", lat: 28.8039, lng: 77.0469 },
+  { h3CellId: "872a1071dffffff", labelKey: "cell_dwarka_sector_21", label: "Dwarka Sector 21", bigQueryLabel: "NSIT Dwarka, Delhi - CPCB", lat: 28.5859, lng: 77.0718 },
+  { h3CellId: "872a1078dffffff", labelKey: "cell_bhalswa_landfill", label: "Bhalswa Landfill", bigQueryLabel: "Jahangirpuri, Delhi - DPCC", lat: 28.7427, lng: 77.1636 },
+  { h3CellId: "872a100cdffffff", labelKey: "cell_connaught_place", label: "Connaught Place", bigQueryLabel: "Mandir Marg, Delhi - DPCC", lat: 28.6315, lng: 77.2167 },
+  { h3CellId: "872a107adffffff", labelKey: "cell_rohini_sector_8", label: "Rohini Sector 8", bigQueryLabel: "Rohini, Delhi - DPCC", lat: 28.7495, lng: 77.1100 },
 ];

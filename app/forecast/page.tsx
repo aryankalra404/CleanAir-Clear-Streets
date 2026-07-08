@@ -18,6 +18,13 @@ import {
 } from "@/lib/forecastEngine";
 import { useT } from "@/lib/languageContext";
 
+type ForecastApiResponse = ForecastResult & {
+  history?: SensorReading[];
+  source?: "bigquery" | "mock";
+};
+
+const FORECAST_REFRESH_MS = 60_000;
+
 // ─── Cell selector component ─────────────────────────────────────────────────
 function CellSelector({
   selected,
@@ -125,77 +132,68 @@ export default function ForecastPage() {
   const [loading, setLoading] = useState(false);
   const [forecast, setForecast] = useState<ForecastResult | null>(null);
   const [history, setHistory] = useState<SensorReading[]>([]);
-  const apiMode = "local" as string;
+  const [source, setSource] = useState<"bigquery" | "mock" | null>(null);
 
   const handleSignOut = () => {
     if (auth) signOut(auth);
   };
 
-  const loadForecast = useCallback(
-    async (h3CellId: string) => {
-      setLoading(true);
-      try {
-        if (apiMode === "api") {
-          // Hit the Next.js API route
-          const res = await fetch(`/api/forecast?h3CellId=${h3CellId}`);
-          if (!res.ok) throw new Error("API error");
-          const data = (await res.json()) as ForecastResult;
-          setForecast(data);
+  const loadForecast = useCallback(async (h3CellId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/forecast?h3CellId=${h3CellId}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("API error");
 
-          // Re-generate mock history locally for the chart (API doesn't return raw history)
-          const cell = DELHI_H3_CELLS.find((c) => c.h3CellId === h3CellId);
-          const hist = generateMockHistory(
-            h3CellId,
-            cell?.label ?? "Delhi",
-            cell?.lat ?? 28.6139,
-            cell?.lng ?? 77.209,
-            72
-          );
-          setHistory(hist);
-        } else {
-          // Pure client-side: deterministic, zero-latency
-          const cell = DELHI_H3_CELLS.find((c) => c.h3CellId === h3CellId);
-          const hist = generateMockHistory(
-            h3CellId,
-            cell?.label ?? "Delhi",
-            cell?.lat ?? 28.6139,
-            cell?.lng ?? 77.209,
-            72
-          );
-          const result = forecastPM25(hist);
-          setHistory(hist);
-          setForecast(result);
-        }
-      } catch (err) {
-        console.error("Forecast error:", err);
-        // Fallback to local
-        const cell = DELHI_H3_CELLS.find((c) => c.h3CellId === h3CellId);
-        const hist = generateMockHistory(
-          h3CellId,
-          cell?.label ?? "Delhi",
-          cell?.lat ?? 28.6139,
-          cell?.lng ?? 77.209,
-          72
-        );
-        setHistory(hist);
-        setForecast(forecastPM25(hist));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [apiMode]
-  );
+      const data = (await res.json()) as ForecastApiResponse;
+      const { history: apiHistory, source: apiSource, ...forecastResult } = data;
+
+      setForecast(forecastResult);
+      setHistory(apiHistory ?? []);
+      setSource(apiSource ?? null);
+    } catch (err) {
+      console.error("Forecast error:", err);
+      const cell = DELHI_H3_CELLS.find((c) => c.h3CellId === h3CellId);
+      const hist = generateMockHistory(
+        h3CellId,
+        cell?.label ?? "Delhi",
+        cell?.lat ?? 28.6139,
+        cell?.lng ?? 77.209,
+        72
+      );
+      setHistory(hist);
+      setForecast(forecastPM25(hist));
+      setSource("mock");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     loadForecast(selectedCell);
   }, [selectedCell, loadForecast]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      loadForecast(selectedCell);
+    }, FORECAST_REFRESH_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [selectedCell, loadForecast]);
+
   const currentAQI = forecast ? getAQIInfo(forecast.currentPm25) : null;
   const peakAQI = forecast ? getAQIInfo(forecast.peakPm25) : null;
+  const sourceLabel =
+    source === "bigquery"
+      ? "Live BigQuery data"
+      : source === "mock"
+      ? "Fallback demo data"
+      : t("forecast_metric_generated_desc");
 
   return (
     <main className="app-page-shell">
-      <div className="app-page-container" style={{ zIndex: 100 }}>
+      <div className="app-page-container">
         <Navbar />
       </div>
 
@@ -350,7 +348,7 @@ export default function ForecastPage() {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
-                sub={t("forecast_metric_generated_desc")}
+                sub={sourceLabel}
               />
             </div>
 

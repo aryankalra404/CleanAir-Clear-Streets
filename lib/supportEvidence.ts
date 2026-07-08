@@ -62,6 +62,9 @@ export function determineTier(input: {
 }
 
 // Lower number = shown first in the Priority tab.
+// Kept for anywhere that just needs a tier's general rank (e.g. labels/badges).
+// The Priority tab itself uses `priorityRank` below, which also factors in
+// citizen report count for crowd_verified incidents.
 export const TIER_RANK: Record<PromotionTier, number> = {
   sensor_satellite_confirmed: 0,
   crowd_verified: 1,
@@ -70,6 +73,49 @@ export const TIER_RANK: Record<PromotionTier, number> = {
   sensor_detected: 4,
   satellite_detected: 5,
 };
+
+// Report count at/above which a crowd_verified incident is treated as
+// "overwhelming citizen consensus" and jumps ahead of sensor/satellite-only
+// corroboration tiers in the Priority tab.
+export const CROWD_OVERWHELMING_THRESHOLD = 5;
+
+/**
+ * Priority-tab specific ranking. Unlike TIER_RANK, this splits
+ * crowd_verified into two bands based on report count:
+ *
+ *   1. sensor_satellite_confirmed
+ *   2. crowd_verified, reportCount >= CROWD_OVERWHELMING_THRESHOLD ("overwhelming" citizen consensus)
+ *   3. citizen_sensor_confirmed
+ *   4. citizen_satellite_confirmed
+ *   5. crowd_verified, reportCount < CROWD_OVERWHELMING_THRESHOLD (baseline 3-4 reports)
+ *   6. sensor_detected
+ *   7. satellite_detected
+ *
+ * Lower number = shown first. Incidents without a tier (shouldn't normally
+ * reach the Priority tab, since it only shows promoted incidents) sort last.
+ */
+export function priorityRank(tier: PromotionTier | null | undefined, reportCount: number): number {
+  if (!tier) return 99;
+
+  if (tier === "crowd_verified") {
+    return reportCount >= CROWD_OVERWHELMING_THRESHOLD ? 1 : 4;
+  }
+
+  switch (tier) {
+    case "sensor_satellite_confirmed":
+      return 0;
+    case "citizen_sensor_confirmed":
+      return 2;
+    case "citizen_satellite_confirmed":
+      return 3;
+    case "sensor_detected":
+      return 5;
+    case "satellite_detected":
+      return 6;
+    default:
+      return 99;
+  }
+}
 
 export const TIER_LABELS: Record<PromotionTier, string> = {
   sensor_satellite_confirmed: "Sensor + Satellite confirmed",

@@ -19,7 +19,7 @@ import {
   type GoogleMapMarker,
   type GoogleMapsApi,
 } from "@/lib/googleMaps";
-import type { Incident, Severity } from "@/lib/types";
+import type { Incident, PromotionTier, Severity } from "@/lib/types";
 import { useT } from "@/lib/languageContext";
 
 declare global {
@@ -85,30 +85,27 @@ interface MapCluster {
   promotedIncident?: Incident;
 }
 
-function getEvidenceSourceSummary(incident: Incident) {
-  const sources = new Set<string>();
-  const evidence = incident.evidence;
+// Maps each promotion tier to the physical source(s) that earned it.
+// This mirrors TIER_LABELS in lib/supportEvidence.ts and must stay in sync
+// with it — the tier itself is the single source of truth for what
+// corroborated an incident, decided at promotion time in
+// lib/supportEvidence.ts / lib/reportSubmissions.ts / lib/ambientScan.ts.
+const TIER_SOURCES: Record<PromotionTier, string[]> = {
+  sensor_satellite_confirmed: ["sensor", "satellite"],
+  crowd_verified: ["citizen"],
+  citizen_sensor_confirmed: ["citizen", "sensor"],
+  citizen_satellite_confirmed: ["citizen", "satellite"],
+  sensor_detected: ["sensor"],
+  satellite_detected: ["satellite"],
+};
 
-  if ((evidence?.citizenSignal?.reportCount ?? incident.corroboratingReports ?? 0) > 0) {
-    sources.add("citizen");
-  }
-  if (
-    evidence?.sensor?.source === "CPCB" &&
-    ((evidence.sensor.primaryDelta !== undefined && evidence.sensor.primaryDelta > 300) || 
-     (evidence.sensor.pm25Delta !== undefined && evidence.sensor.pm25Delta > 300) || 
-     evidence.sensor.trend === "rising") &&
-    evidence.sensor.lastUpdated
-  ) {
-    sources.add("sensor");
-  }
-  if (evidence?.satellite?.signal && !evidence.satellite.signal.includes("not decisive") && !evidence.satellite.signal.includes("pending")) {
-    sources.add("satellite");
-  }
-  if (sources.size === 0) sources.add(incident.source);
+function getEvidenceSourceSummary(incident: Incident) {
+  const tier = incident.evidence?.tier;
+  const sources = tier && TIER_SOURCES[tier] ? [...TIER_SOURCES[tier]] : [incident.source];
 
   return {
-    count: sources.size,
-    label: [...sources].join(" + "),
+    count: sources.length,
+    label: sources.join(" + "),
   };
 }
 
