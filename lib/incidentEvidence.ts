@@ -1,4 +1,5 @@
 import type { HazardType, Incident, IncidentEvidence } from "@/lib/types";
+import { determineTier, tierPromotionReason } from "@/lib/supportEvidence";
 
 const fallbackH3ByHazard: Record<HazardType, string> = {
   dust: "883da118c3fffff",
@@ -7,6 +8,10 @@ const fallbackH3ByHazard: Record<HazardType, string> = {
   smog: "883da1189bfffff",
 };
 
+// Fallback evidence generator: only runs when a doc has no stored `validation`
+// (mock data, or a doc that predates the classify-report pipeline). This is
+// display-only — it never affects real promotion, which lives in
+// reportSubmissions.ts / lib/ambientScan.ts and uses live sensor/satellite reads.
 export function buildIncidentEvidence(incident: Incident): IncidentEvidence {
   const reports = incident.corroboratingReports ?? (incident.source === "citizen" ? 1 : 0);
   const lowCoverage = incident.source === "citizen" && reports >= 2;
@@ -20,12 +25,18 @@ export function buildIncidentEvidence(incident: Incident): IncidentEvidence {
     98,
     incident.aiConfidence + citizenBoost + coverageBoost + satelliteBoost,
   );
-  const alertTier =
-    incident.status === "verified" ||
-    incident.status === "dispatched" ||
-    incident.status === "predicted" ||
-    reports >= 3 ||
-    (incident.severity === "critical" && incident.source !== "citizen");
+
+  // Approximate sensor/satellite "support" from source/severity since this
+  // fallback path has no live readings to check against.
+  const sensorSupported = incident.source === "sensor" || (incident.source === "citizen" && coverageLevel !== "low");
+  const satelliteSupported = incident.source === "satellite" || satelliteFresh;
+  const statusImpliesPromoted =
+    incident.status === "verified" || incident.status === "dispatched" || incident.status === "predicted";
+
+  const tier =
+    determineTier({ reportCount: reports, sensorSupported, satelliteSupported }) ??
+    (statusImpliesPromoted ? "crowd_verified" : null);
+  const alertTier = tier !== null;
 
   return {
     alertReason:
@@ -33,6 +44,7 @@ export function buildIncidentEvidence(incident: Incident): IncidentEvidence {
         ? `${reports} citizen reports in a low station coverage zone; citizen corroboration is driving the alert.`
         : `${incident.source} signal corroborated with nearby reports and satellite context.`,
     alertTier,
+    tier,
     citizenSignal: {
       reportCount: reports,
       windowMinutes: reports >= 3 ? 14 : 28,
@@ -56,9 +68,7 @@ export function buildIncidentEvidence(incident: Incident): IncidentEvidence {
       sensorWeight: coverageLevel === "low" ? 0.12 : 0.34,
       satelliteWeight: satelliteFresh ? 0.32 : 0.2,
     },
-    promotionReason: alertTier
-      ? "Promoted to Command Center after corroboration threshold."
-      : "Waiting for corroboration before municipal alert.",
+    promotionReason: tier ? tierPromotionReason(tier, reports) : "Waiting for corroboration before municipal alert.",
     satellite: {
       source: "Earth Engine",
       signal: satelliteFresh

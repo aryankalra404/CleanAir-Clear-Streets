@@ -28,6 +28,7 @@ export interface FirestoreReport {
   note?: string;
   result?: string;
   status?: IncidentStatus | "submitted" | "classified" | "no_signal";
+  source?: string;
   validation?: IncidentEvidence;
   photoUrl?: string;
   h3CellId?: string;
@@ -133,7 +134,7 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     neighborhood: report.location?.label ?? "Citizen report",
     photoUrl: report.photoUrl ?? "",
     severity,
-    source: "citizen",
+    source: report.source === "sensor" ? "sensor" : report.source === "satellite" ? "satellite" : "citizen",
     status: normalizeStatus(report.status),
     timestamp:
       report.createdAt?.toDate().toISOString() ??

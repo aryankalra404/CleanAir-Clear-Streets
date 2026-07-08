@@ -4,7 +4,7 @@ import { useT } from "@/lib/languageContext";
 
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query, doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import type { Incident, Source } from "@/lib/types";
+import type { Incident } from "@/lib/types";
 import {
   commandStats,
   formatStatus,
@@ -19,12 +19,15 @@ import {
   type FirestoreReport,
 } from "@/lib/firestoreReports";
 import { buildIncidentEvidence } from "@/lib/incidentEvidence";
+import { TIER_LABELS, TIER_RANK } from "@/lib/supportEvidence";
 import { latLngToCell } from "h3-js";
 
-const sourceFilters: Array<{ id: Source | "all"; label: string }> = [
-  { id: "all", label: "All sources" },
-  { id: "citizen", label: "Photo reports" },
-  { id: "sensor", label: "Sensors" },
+type CommandTab = "priority" | "citizen" | "sensor" | "satellite";
+
+const commandTabs: Array<{ id: CommandTab; label: string }> = [
+  { id: "priority", label: "Priority" },
+  { id: "citizen", label: "Citizen reported" },
+  { id: "sensor", label: "Sensor" },
   { id: "satellite", label: "Satellite" },
 ];
 
@@ -33,7 +36,7 @@ export default function CommandCenter() {
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [liveAlertIncidents, setLiveAlertIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [source, setSource] = useState<Source | "all">("all");
+  const [activeTab, setActiveTab] = useState<CommandTab>("priority");
   const [toastMessage, setToastMessage] = useState("");
 
   const showToast = (msg: string) => {
@@ -82,17 +85,84 @@ export default function CommandCenter() {
     });
   }, []);
 
+  // Kick off the sensor/satellite-only ambient scan (no citizen report
+  // needed). Writes land in the "incidents" collection and flow back through
+  // the onSnapshot listener above like any other promoted incident. The route
+  // itself has a 5-min in-process cooldown, so this is safe to call on mount.
+  useEffect(() => {
+    if (!isFirebaseConfigured) return;
+    fetch("/api/scan-ambient").catch(() => {
+      // Non-fatal — ambient detections just won't appear until the next scan succeeds.
+    });
+  }, []);
+
   const incomingSignals = useMemo(
     () => liveReports.filter((incident) => !incident.evidence?.alertTier),
     [liveReports],
   );
 
+  // "incidents" collection = anything that has cleared a promotion tier,
+  // sorted strongest evidence first (sensor+satellite > crowd > single-channel > detection-only).
+  const priorityIncidents = useMemo(
+    () =>
+      [...liveAlertIncidents].sort((a, b) => {
+        const rankA = a.evidence?.tier ? TIER_RANK[a.evidence.tier] : 99;
+        const rankB = b.evidence?.tier ? TIER_RANK[b.evidence.tier] : 99;
+        return rankA - rankB;
+      }),
+    [liveAlertIncidents],
+  );
+
+  // All citizen reports that passed Gemini verification, regardless of
+  // promotion status — matches "citizen reported" tab requirement.
+  const citizenIncidents = liveReports;
+
+  const sensorIncidents = useMemo(
+    () =>
+      liveAlertIncidents.filter((incident) => {
+        const tier = incident.evidence?.tier;
+        return (
+          tier === "sensor_detected" ||
+          tier === "citizen_sensor_confirmed" ||
+          tier === "sensor_satellite_confirmed"
+        );
+      }),
+    [liveAlertIncidents],
+  );
+
+  const satelliteIncidents = useMemo(
+    () =>
+      liveAlertIncidents.filter((incident) => {
+        const tier = incident.evidence?.tier;
+        return (
+          tier === "satellite_detected" ||
+          tier === "citizen_satellite_confirmed" ||
+          tier === "sensor_satellite_confirmed"
+        );
+      }),
+    [liveAlertIncidents],
+  );
+
   const incidents = liveAlertIncidents;
 
+  // On the citizen tab, filteredIncidents already IS liveReports (which
+  // includes the unpromoted ones), so don't add incomingSignals again.
+  const mapOverlaySignals = activeTab === "citizen" ? [] : incomingSignals;
+
   const filteredIncidents = useMemo(() => {
-    if (source === "all") return incidents;
-    return incidents.filter((incident) => incident.source === source);
-  }, [incidents, source]);
+    switch (activeTab) {
+      case "priority":
+        return priorityIncidents;
+      case "citizen":
+        return citizenIncidents;
+      case "sensor":
+        return sensorIncidents;
+      case "satellite":
+        return satelliteIncidents;
+      default:
+        return priorityIncidents;
+    }
+  }, [activeTab, priorityIncidents, citizenIncidents, sensorIncidents, satelliteIncidents]);
 
   const selectedIncident =
     (() => {
@@ -156,17 +226,17 @@ export default function CommandCenter() {
           <span>{filteredIncidents.length} active</span>
         </div>
 
-        <div className="source-filter-row" aria-label="Source filters">
-          {sourceFilters.map((filter) => (
+        <div className="source-filter-row" aria-label="Command Center tabs">
+          {commandTabs.map((tab) => (
             <button
-              className={source === filter.id ? "source-filter active" : "source-filter"}
-              key={filter.id}
-              onClick={() => setSource(filter.id)}
+              className={activeTab === tab.id ? "source-filter active" : "source-filter"}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
               type="button"
             >
-              {filter.id === "all" ? t("source_filter_all") : 
-               filter.id === "citizen" ? t("source_filter_citizen") : 
-               filter.id === "sensor" ? t("source_filter_sensor") : 
+              {tab.id === "priority" ? (t("source_filter_priority") || tab.label) :
+               tab.id === "citizen" ? t("source_filter_citizen") :
+               tab.id === "sensor" ? t("source_filter_sensor") :
                t("source_filter_satellite")}
             </button>
           ))}
@@ -197,7 +267,11 @@ export default function CommandCenter() {
                   {incident.neighborhood}
                 </strong>
                 <small>
-                  {t("hazard_" + incident.hazardType)} · {incident.source === "citizen" ? t("source_filter_citizen") : incident.source === "sensor" ? t("source_filter_sensor") : t("source_filter_satellite")} ·{" "}
+                  {t("hazard_" + incident.hazardType)}
+                  {incident.evidence?.tier
+                    ? ` · ${t("tier_" + incident.evidence.tier) || TIER_LABELS[incident.evidence.tier]}`
+                    : ` · ${incident.source === "citizen" ? t("source_filter_citizen") : incident.source === "sensor" ? t("source_filter_sensor") : t("source_filter_satellite")}`}
+                  {" · "}
                   {incident.aiConfidence}% {t("map_confidence")}
                 </small>
               </span>
@@ -208,7 +282,7 @@ export default function CommandCenter() {
           ))}
         </div>
 
-        <IncomingSignals signals={incomingSignals} t={t} />
+        {activeTab !== "citizen" && <IncomingSignals signals={incomingSignals} t={t} />}
       </aside>
 
       <div className="command-map-panel">
@@ -217,11 +291,11 @@ export default function CommandCenter() {
             <p>{t("command_detail_map_title")}</p>
             <h2>{t("command_detail_map_layer")}</h2>
           </div>
-          <span>{filteredIncidents.length + incomingSignals.length} mapped</span>
+          <span>{filteredIncidents.length + mapOverlaySignals.length} mapped</span>
         </div>
 
         <GoogleHotspotMap
-          incidents={[...filteredIncidents, ...incomingSignals]}
+          incidents={[...filteredIncidents, ...mapOverlaySignals]}
           mode="operations"
           onIncidentSelect={setSelectedId}
           selectedIncidentId={selectedIncidentId}

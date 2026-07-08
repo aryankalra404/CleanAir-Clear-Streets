@@ -17,9 +17,23 @@ export type Source = "citizen" | "sensor" | "satellite";
 
 export type HealthRisk = "low" | "medium" | "high";
 
+// Ranked highest-confidence first. Two independent physical sources agreeing
+// (sensor + satellite) outranks crowd corroboration, which outranks a single
+// citizen report backed by only one instrument channel.
+export type PromotionTier =
+  | "sensor_satellite_confirmed"
+  | "crowd_verified"
+  | "citizen_sensor_confirmed"
+  | "citizen_satellite_confirmed"
+  | "sensor_detected"
+  | "satellite_detected";
+
 export interface IncidentEvidence {
   alertReason: string;
   alertTier: boolean;
+  // Set only once an incident has actually cleared a promotion path (see
+  // lib/supportEvidence.ts). Undefined/null means "not yet promoted."
+  tier?: PromotionTier | null;
   citizenSignal: {
     reportCount: number;
     windowMinutes: number;
@@ -44,6 +58,11 @@ export interface IncidentEvidence {
     signal: string;
     lastPassTime: string;
     freshness: "fresh" | "stale";
+    // 0-1 anomaly score for the hazard-relevant Sentinel-5P band
+    // (aerosol index for fire/dust, NO2 for industrial/smog). Used to decide
+    // whether satellite data actually *supports* a hazard, not just context.
+    anomalyScore?: number;
+    hazardWeight?: number;
   };
   sensor: {
     pm25Delta: number;

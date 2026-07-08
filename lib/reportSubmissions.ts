@@ -12,7 +12,13 @@ import {
 import { latLngToCell } from "h3-js";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { resolveIncidentHazardType } from "@/lib/firestoreReports";
-import type { IncidentEvidence } from "@/lib/types";
+import type { HazardType, IncidentEvidence } from "@/lib/types";
+import {
+  checkStoredSensorSupport,
+  checkStoredSatelliteSupport,
+  determineTier,
+  tierPromotionReason,
+} from "@/lib/supportEvidence";
 
 export interface ReportSubmissionInput {
   anonymous: boolean;
@@ -50,7 +56,6 @@ interface StoredReport {
 
 const H3_RESOLUTION = 8;
 export const DEFAULT_H3_CELL_ID = "883da114bbfffff";
-const PROMOTION_REPORT_THRESHOLD = 3;
 const POLLUTION_TYPES = new Set(["dust", "fire", "haze", "smoke"]);
 
 export function getHazardType(hazardId: string) {
@@ -115,7 +120,27 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
   }
 
   for (const [hazardType, hazardReports] of Object.entries(reportsByHazard)) {
-    if (hazardReports.length < PROMOTION_REPORT_THRESHOLD) continue;
+    // Sort to make the highest confidence report primary
+    hazardReports.sort((a, b) => getPollutionSignalConfidence(b.data) - getPollutionSignalConfidence(a.data));
+    const primaryReport = hazardReports[0].data;
+
+    // Support can come from ANY report in the cluster, not just the primary one —
+    // one citizen's report might not have a nearby station, but another's might.
+    const sensorSupported = hazardReports.some((r) =>
+      checkStoredSensorSupport(hazardType as HazardType, r.data.validation?.sensor),
+    );
+    const satelliteSupported = hazardReports.some((r) =>
+      checkStoredSatelliteSupport(r.data.validation?.satellite),
+    );
+
+    const tier = determineTier({
+      reportCount: hazardReports.length,
+      sensorSupported,
+      satelliteSupported,
+    });
+
+    // Not enough evidence yet on any promotion path — leave as citizen-only signal.
+    if (!tier) continue;
 
     const avgConfidence = Math.round(
       hazardReports.reduce(
@@ -123,18 +148,16 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
         0,
       ) / hazardReports.length,
     );
-    // Sort to make the highest confidence report primary
-    hazardReports.sort((a, b) => getPollutionSignalConfidence(b.data) - getPollutionSignalConfidence(a.data));
-    const primaryReport = hazardReports[0].data;
     const reportWithPhoto = hazardReports.find((r) => !!r.data.photoUrl);
     const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
-    const promotionReason = `${hazardReports.length} citizen reports in the same H3 cell crossed the 20 min corroboration threshold.`;
-    
+    const promotionReason = tierPromotionReason(tier, hazardReports.length);
+
     const baseValidation = primaryReport.validation;
     const promotedValidation = baseValidation ? {
       ...baseValidation,
       alertReason: "Citizen-corroborated hotspot promoted from public signals to municipal review.",
       alertTier: true,
+      tier,
       citizenSignal: {
         ...baseValidation.citizenSignal,
         averageConfidence: avgConfidence,
@@ -150,6 +173,7 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       alertReason:
         "Citizen-corroborated hotspot promoted from public signals to municipal review.",
       alertTier: true,
+      tier,
       citizenSignal: {
         averageConfidence: avgConfidence,
         reportCount: hazardReports.length,
@@ -198,7 +222,7 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
         createdAt: serverTimestamp(),
         geminiClassification: {
           confidence: avgConfidence,
-          description: `Citizen-corroborated ${hazardType} hotspot`,
+          description: `${hazardType} hotspot — ${tierPromotionReason(tier, hazardReports.length)}`,
           severity: getSeverity(avgConfidence),
           type: primaryReport.geminiClassification?.type ?? hazardType,
         },

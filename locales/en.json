@@ -219,7 +219,14 @@
   "forecast_at_time": "at {time}",
   "default_location_label": "Ghazipur Landfill, East Delhi",
   "source_filter_all": "All sources",
+  "source_filter_priority": "Priority",
   "source_filter_citizen": "Photo reports",
   "source_filter_sensor": "Sensors",
-  "source_filter_satellite": "Satellite"
+  "source_filter_satellite": "Satellite",
+  "tier_sensor_satellite_confirmed": "Sensor + Satellite confirmed",
+  "tier_crowd_verified": "Crowd-verified",
+  "tier_citizen_sensor_confirmed": "Citizen + Sensor confirmed",
+  "tier_citizen_satellite_confirmed": "Citizen + Satellite confirmed",
+  "tier_sensor_detected": "Sensor-detected",
+  "tier_satellite_detected": "Satellite-detected"
 }
