@@ -1,43 +1,8 @@
-import { mockForecasts, mockIncidents, mockLiveStats } from "@/lib/mockData";
-
-export const activeIncidents = mockIncidents.filter(
-  (incident) => incident.status !== "resolved",
-);
-
-export const criticalIncidents = activeIncidents.filter(
-  (incident) => incident.severity === "critical",
-);
-
-export const priorityIncidents = [...activeIncidents]
-  .sort((a, b) => b.aiConfidence - a.aiConfidence)
-  .slice(0, 3);
-
-export const highestForecast = [...mockForecasts].sort(
-  (a, b) => b.peakPm25 - a.peakPm25,
-)[0];
-
-export const heroStats = [
-  {
-    label: "Active hotspots",
-    value: mockLiveStats.activeHotspots,
-    detail: `${criticalIncidents.length} critical`,
-  },
-  {
-    label: "Resolved today",
-    value: mockLiveStats.resolvedToday,
-    detail: "cleanup crews logged",
-  },
-  {
-    label: "Avg response",
-    value: `${mockLiveStats.avgResponseTimeMinutes}m`,
-    detail: "report to dispatch",
-  },
-  {
-    label: "Next spike",
-    value: highestForecast.peakTime,
-    detail: `${highestForecast.neighborhood}, PM2.5 ${highestForecast.peakPm25}`,
-  },
-];
+// Note: this file previously exported mock-incident-derived stats
+// (activeIncidents, criticalIncidents, priorityIncidents, heroStats,
+// highestForecast) built from lib/mockData.ts. Nothing actually consumed
+// them — HeroSection.tsx computes its own live versions straight from
+// Firestore — so they've been removed rather than wired to real data.
 
 export const workflowSteps = [
   {

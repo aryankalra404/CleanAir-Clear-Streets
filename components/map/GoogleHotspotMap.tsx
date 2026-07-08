@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { formatStatus } from "@/components/command/commandData";
 import { latLngToCell } from "h3-js";
-import { CITY_CENTER } from "@/lib/mockData";
+import { CITY_CENTER } from "@/lib/mapConstants";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import {
   hasPollutionSignal,

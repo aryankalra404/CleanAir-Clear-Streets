@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useT } from "@/lib/languageContext";
 import { useEffect, useRef, useState } from "react";
 import { loadGoogleMaps, type GoogleMapInstance, type GoogleMapMarker } from "@/lib/googleMaps";
-import { CITY_CENTER } from "@/lib/mockData";
+import { CITY_CENTER } from "@/lib/mapConstants";
 
 const severityColor: Record<Severity, string> = {
   critical: "#ef4444",

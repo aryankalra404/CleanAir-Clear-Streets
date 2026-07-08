@@ -1,4 +1,3 @@
-import { mockForecasts, mockLiveStats } from "@/lib/mockData";
 import type { Incident } from "@/lib/types";
 
 const actionByHazard: Record<Incident["hazardType"], string> = {
@@ -8,6 +7,9 @@ const actionByHazard: Record<Incident["hazardType"], string> = {
   industrial: "Notify pollution control board",
 };
 
+// Template stat cards. Every value/detail here is a placeholder that
+// CommandCenter.tsx always overwrites with a live-computed figure (or "—"
+// when no live figure is available yet) — see the `stats` useMemo there.
 export const commandStats = [
   {
     label: "Active incidents",
@@ -21,13 +23,13 @@ export const commandStats = [
   },
   {
     label: "Avg response",
-    value: `${mockLiveStats.avgResponseTimeMinutes}m`,
+    value: "—",
     detail: "Report to dispatch",
   },
   {
     label: "Peak risk",
-    value: mockForecasts[0].peakTime,
-    detail: `${mockForecasts[0].neighborhood}`,
+    value: "—",
+    detail: "Awaiting forecast",
   },
 ];
 
@@ -41,7 +43,7 @@ export function formatStatus(status: Incident["status"]) {
 
 export function getIncidentAge(timestamp: string) {
   const then = new Date(timestamp).getTime();
-  const now = new Date("2026-07-02T10:15:00Z").getTime();
+  const now = Date.now();
   const minutes = Math.max(1, Math.round((now - then) / 60000));
   if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   return `${minutes}m`;
