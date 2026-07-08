@@ -223,6 +223,8 @@
   "source_filter_citizen": "Photo reports",
   "source_filter_sensor": "Sensors",
   "source_filter_satellite": "Satellite",
+  "source_filter_citizen_reported": "Citizen Reported",
+  "source_filter_auto_detected": "Automatically Detected",
   "tier_sensor_satellite_confirmed": "Sensor + Satellite confirmed",
   "tier_crowd_verified": "Crowd-verified",
   "tier_citizen_sensor_confirmed": "Citizen + Sensor confirmed",

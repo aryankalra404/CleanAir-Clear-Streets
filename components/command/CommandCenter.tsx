@@ -22,13 +22,12 @@ import { buildIncidentEvidence } from "@/lib/incidentEvidence";
 import { TIER_LABELS, TIER_RANK } from "@/lib/supportEvidence";
 import { latLngToCell } from "h3-js";
 
-type CommandTab = "priority" | "citizen" | "sensor" | "satellite";
+type CommandTab = "priority" | "citizen_reported" | "auto_detected";
 
 const commandTabs: Array<{ id: CommandTab; label: string }> = [
   { id: "priority", label: "Priority" },
-  { id: "citizen", label: "Citizen reported" },
-  { id: "sensor", label: "Sensor" },
-  { id: "satellite", label: "Satellite" },
+  { id: "citizen_reported", label: "Citizen Reported" },
+  { id: "auto_detected", label: "Automatically Detected" },
 ];
 
 export default function CommandCenter() {
@@ -113,56 +112,47 @@ export default function CommandCenter() {
     [liveAlertIncidents],
   );
 
-  // All citizen reports that passed Gemini verification, regardless of
-  // promotion status — matches "citizen reported" tab requirement.
-  const citizenIncidents = liveReports;
-
-  const sensorIncidents = useMemo(
+  // Citizen Reported: any promoted incident that had at least one citizen
+  // report behind it — including sensor+satellite-confirmed incidents that
+  // also happened to have citizen reports. Citizen involvement always wins
+  // this bucket, since a human-corroborated signal deserves its own
+  // priority channel regardless of what else confirmed it.
+  const citizenReportedIncidents = useMemo(
     () =>
-      liveAlertIncidents.filter((incident) => {
-        const tier = incident.evidence?.tier;
-        return (
-          tier === "sensor_detected" ||
-          tier === "citizen_sensor_confirmed" ||
-          tier === "sensor_satellite_confirmed"
-        );
-      }),
+      liveAlertIncidents.filter(
+        (incident) => (incident.evidence?.citizenSignal?.reportCount ?? 0) > 0,
+      ),
     [liveAlertIncidents],
   );
 
-  const satelliteIncidents = useMemo(
+  // Automatically Detected: promoted incidents with zero citizen reports —
+  // purely sensor/satellite driven, since automatic detection can be wrong
+  // and shouldn't be mixed into the citizen-corroborated channel.
+  const autoDetectedIncidents = useMemo(
     () =>
-      liveAlertIncidents.filter((incident) => {
-        const tier = incident.evidence?.tier;
-        return (
-          tier === "satellite_detected" ||
-          tier === "citizen_satellite_confirmed" ||
-          tier === "sensor_satellite_confirmed"
-        );
-      }),
+      liveAlertIncidents.filter(
+        (incident) => (incident.evidence?.citizenSignal?.reportCount ?? 0) === 0,
+      ),
     [liveAlertIncidents],
   );
 
   const incidents = liveAlertIncidents;
 
-  // On the citizen tab, filteredIncidents already IS liveReports (which
-  // includes the unpromoted ones), so don't add incomingSignals again.
-  const mapOverlaySignals = activeTab === "citizen" ? [] : incomingSignals;
+  const mapOverlaySignals = incomingSignals;
 
   const filteredIncidents = useMemo(() => {
     switch (activeTab) {
       case "priority":
         return priorityIncidents;
-      case "citizen":
-        return citizenIncidents;
-      case "sensor":
-        return sensorIncidents;
-      case "satellite":
-        return satelliteIncidents;
+      case "citizen_reported":
+        return citizenReportedIncidents;
+      case "auto_detected":
+        return autoDetectedIncidents;
       default:
         return priorityIncidents;
     }
-  }, [activeTab, priorityIncidents, citizenIncidents, sensorIncidents, satelliteIncidents]);
+  }, [activeTab, priorityIncidents, citizenReportedIncidents, autoDetectedIncidents]);
+
 
   const selectedIncident =
     (() => {
@@ -235,9 +225,8 @@ export default function CommandCenter() {
               type="button"
             >
               {tab.id === "priority" ? (t("source_filter_priority") || tab.label) :
-               tab.id === "citizen" ? t("source_filter_citizen") :
-               tab.id === "sensor" ? t("source_filter_sensor") :
-               t("source_filter_satellite")}
+               tab.id === "citizen_reported" ? (t("source_filter_citizen_reported") || tab.label) :
+               (t("source_filter_auto_detected") || tab.label)}
             </button>
           ))}
         </div>
@@ -282,7 +271,7 @@ export default function CommandCenter() {
           ))}
         </div>
 
-        {activeTab !== "citizen" && <IncomingSignals signals={incomingSignals} t={t} />}
+        {activeTab !== "auto_detected" && <IncomingSignals signals={incomingSignals} t={t} />}
       </aside>
 
       <div className="command-map-panel">
