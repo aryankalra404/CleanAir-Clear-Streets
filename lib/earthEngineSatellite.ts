@@ -12,12 +12,16 @@ const AEROSOL_COLLECTION = "COPERNICUS/S5P/OFFL/L3_AER_AI";
 const AEROSOL_BAND = "absorbing_aerosol_index";
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20_000;
-const CURRENT_WINDOW_DAYS = 30;
+const CURRENT_WINDOW_DAYS = 7;
 const BASELINE_WINDOW_DAYS = 120;
 const SAMPLE_BUFFER_METERS = 1500;
 
-// Scores compare the current 30-day median to the same point's previous
-// 120-day median. NO2 reaches 1.0 at about +150% over local baseline; Aerosol
+// Scores compare the current 7-day median to the same point's previous
+// 120-day median. A short current window reacts faster to acute events
+// (e.g. a smog trap at a junction) while still smoothing over Sentinel-5P's
+// cloud-cover/revisit gaps; the 120-day baseline stays long so slow-building
+// hotspots (industrial clusters, recurring landfill fires) still register.
+// NO2 reaches 1.0 at about +150% over local baseline; Aerosol
 // Index reaches 1.0 at about +1.5 positive AI units over local baseline.
 // Negative AI is intentionally treated as clean/no absorbing-aerosol signal.
 const NO2_FULL_ANOMALY_RATIO = 1.5;
