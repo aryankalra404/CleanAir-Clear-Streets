@@ -33,16 +33,7 @@ export default function HeroSection() {
     return resolvedDate.toDateString() === today.toDateString();
   }).length;
 
-  const dispatchedIncidents = liveIncidents.filter(i => i.dispatchStatus === "dispatched" && i.dispatchedAt && i.timestamp);
-  let avgResponse = "—";
-  if (dispatchedIncidents.length > 0) {
-    const totalMinutes = dispatchedIncidents.reduce((sum, i) => {
-      const created = new Date(i.timestamp).getTime();
-      const dispatched = new Date(i.dispatchedAt!).getTime();
-      return sum + Math.max(1, (dispatched - created) / 60000);
-    }, 0);
-    avgResponse = `${Math.round(totalMinutes / dispatchedIncidents.length)}m`;
-  }
+  const avgResponse = "-";
 
   const liveStats = [
     {
