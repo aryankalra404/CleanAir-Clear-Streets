@@ -95,8 +95,6 @@ CleanAir-Clear-Streets/
 
 > **WhatsApp reporting:** The `/whatsapp_bot` folder contains the bot citizens can message directly to submit pollution reports (photo or voice note) without needing to open the web app — widening access for residents without a smartphone data plan or app familiarity.
 
-Repo: [github.com/aryankalra404/CleanAir-Clear-Streets](https://github.com/aryankalra404/CleanAir-Clear-Streets)
-
 ---
 
 ## Local Setup
@@ -227,7 +225,7 @@ pnpm start
 | | |
 |---|---|
 | **13** | languages supported |
-| **8+** | Delhi zones piloted |
+| **8+** | Delhi zones piloted | 
 | **24h** | air quality forecast window |
 
 ---

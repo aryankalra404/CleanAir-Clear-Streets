@@ -60,3 +60,4 @@ __pycache__/
 /public/banner.jpg
 /public/uploads/
 
+.pnpm-store/
