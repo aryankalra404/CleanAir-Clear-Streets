@@ -4,9 +4,8 @@ import {
   doc,
   getDocs,
   query,
+  runTransaction,
   serverTimestamp,
-  setDoc,
-  updateDoc,
   where,
 } from "firebase/firestore";
 import { latLngToCell } from "h3-js";
@@ -97,29 +96,51 @@ function getPollutionSignalConfidence(report: StoredReport) {
 export async function promoteCellIfThresholdPassed(h3CellId: string) {
   if (!db) return;
 
-  const reportsQuery = query(
-    collection(db, "reports"),
-    where("h3CellId", "==", h3CellId),
-  );
-  const snapshot = await getDocs(reportsQuery);
-  const allReports = snapshot.docs
-    .map((reportDoc) => ({
-      id: reportDoc.id,
-      ref: reportDoc.ref,
-      data: reportDoc.data() as StoredReport,
-    }))
-    .filter(
-      (report) => getPollutionSignalConfidence(report.data) > 0
+  // This used to be a plain getDocs() read followed by separate
+  // updateDoc/setDoc writes. Every citizen report fires its own
+  // classify-report call (fire-and-forget), so when 2-3 reports land close
+  // together, multiple calls to this function for the same h3CellId run
+  // concurrently. With a non-transactional read, call B could read
+  // Firestore *before* call A's write for report A had committed, see only
+  // 2 qualifying reports instead of 3, decide "not enough evidence yet",
+  // and bail — and nothing ever re-triggers promotion for that cell after
+  // that. Wrapping the read + write in a transaction means Firestore
+  // automatically retries a call if another transaction committed
+  // conflicting writes in the meantime, so every call sees a consistent,
+  // up-to-date view before deciding.
+  await runTransaction(db, async (transaction) => {
+    const reportsQuery = query(
+      collection(db!, "reports"),
+      where("h3CellId", "==", h3CellId),
     );
+    const snapshot = await getDocs(reportsQuery);
 
-  const reportsByHazard: Record<string, typeof allReports> = {};
-  for (const r of allReports) {
-    const hazard = resolveIncidentHazardType(r.data);
-    if (!reportsByHazard[hazard]) reportsByHazard[hazard] = [];
-    reportsByHazard[hazard].push(r);
-  }
+    // Firestore transactions require all reads to happen before any write,
+    // and reads inside the transaction must go through transaction.get on
+    // each individual doc ref (query-based reads aren't transactional) —
+    // so we re-fetch each candidate doc's current data transactionally
+    // here, on the exact set of doc refs returned by the query above.
+    const allReports = (
+      await Promise.all(
+        snapshot.docs.map(async (reportDoc) => {
+          const freshSnap = await transaction.get(reportDoc.ref);
+          return {
+            id: reportDoc.id,
+            ref: reportDoc.ref,
+            data: freshSnap.data() as StoredReport,
+          };
+        }),
+      )
+    ).filter((report) => getPollutionSignalConfidence(report.data) > 0);
 
-  for (const [hazardType, hazardReports] of Object.entries(reportsByHazard)) {
+    const reportsByHazard: Record<string, typeof allReports> = {};
+    for (const r of allReports) {
+      const hazard = resolveIncidentHazardType(r.data);
+      if (!reportsByHazard[hazard]) reportsByHazard[hazard] = [];
+      reportsByHazard[hazard].push(r);
+    }
+
+    for (const [hazardType, hazardReports] of Object.entries(reportsByHazard)) {
     // Sort to make the highest confidence report primary
     hazardReports.sort((a, b) => getPollutionSignalConfidence(b.data) - getPollutionSignalConfidence(a.data));
     const primaryReport = hazardReports[0].data;
@@ -206,17 +227,15 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       },
     };
 
-    await Promise.all(
-      hazardReports.map((report) =>
-        updateDoc(report.ref, {
-          status: "under_review",
-          validation: promotedValidation,
-        }),
-      ),
-    );
+    for (const report of hazardReports) {
+      transaction.update(report.ref, {
+        status: "under_review",
+        validation: promotedValidation,
+      });
+    }
 
-    await setDoc(
-      doc(db, "incidents", `${h3CellId}-${hazardType}`),
+    transaction.set(
+      doc(db!, "incidents", `${h3CellId}-${hazardType}`),
       {
         aiConfidence: avgConfidence,
         createdAt: serverTimestamp(),
@@ -242,7 +261,8 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       },
       { merge: true },
     );
-  }
+    }
+  });
 }
 
 export async function submitCitizenReport(report: ReportSubmissionInput) {
@@ -301,16 +321,41 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
     status: "pending",
   });
 
-  void fetch("/api/classify-report", {
-    body: JSON.stringify({ reportId: docRef.id }),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-  }).catch(() => {
-    // The UI already saved the report; backend classification can be retried later.
-  });
+  // Stays non-blocking (we don't await this before returning) so the UI
+  // doesn't hang on Gemini classification — but a report that fails to
+  // classify never gets a geminiClassification, hasPollutionSignal() then
+  // filters it out client-side forever, and it silently never counts
+  // toward the 3-report promotion threshold. Retrying a couple of times
+  // fixes transient failures (cold starts, network blips) instead of
+  // permanently stranding the report on a single failed attempt.
+  void classifyReportWithRetry(docRef.id);
 
   return {
     id: docRef.id,
     stored: true,
   };
+}
+
+async function classifyReportWithRetry(reportId: string, attempt = 1): Promise<void> {
+  const MAX_ATTEMPTS = 3;
+  try {
+    const res = await fetch("/api/classify-report", {
+      body: JSON.stringify({ reportId }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+    if (!res.ok) throw new Error(`classify-report responded ${res.status}`);
+  } catch (err) {
+    if (attempt >= MAX_ATTEMPTS) {
+      console.error(
+        `classify-report failed after ${MAX_ATTEMPTS} attempts for report ${reportId}; ` +
+          `this report will never count toward the promotion threshold until retried manually.`,
+        err,
+      );
+      return;
+    }
+    const backoffMs = 1000 * attempt;
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    return classifyReportWithRetry(reportId, attempt + 1);
+  }
 }

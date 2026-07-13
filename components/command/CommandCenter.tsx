@@ -37,6 +37,7 @@ export default function CommandCenter() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<CommandTab>("priority");
   const [toastMessage, setToastMessage] = useState("");
+  const [liveDataError, setLiveDataError] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -49,21 +50,32 @@ export default function CommandCenter() {
     const reportsQuery = query(
       collection(db, "reports"),
       orderBy("createdAt", "desc"),
-      limit(8),
+      limit(50),
     );
 
-    return onSnapshot(reportsQuery, (snapshot) => {
-      setLiveReports(
-        snapshot.docs
-          .map((reportDoc) => ({
-            data: reportDoc.data() as FirestoreReport,
-            id: reportDoc.id,
-          }))
-          .filter((report) => hasPollutionSignal(report.data))
-          .map((report) => reportToIncident(report.id, report.data))
-          .filter((incident) => incident.status !== "resolved"),
-      );
-    });
+    return onSnapshot(
+      reportsQuery,
+      (snapshot) => {
+        setLiveDataError(null);
+        setLiveReports(
+          snapshot.docs
+            .map((reportDoc) => ({
+              data: reportDoc.data() as FirestoreReport,
+              id: reportDoc.id,
+            }))
+            .filter((report) => hasPollutionSignal(report.data))
+            .map((report) => reportToIncident(report.id, report.data))
+            .filter((incident) => incident.status !== "resolved"),
+        );
+      },
+      (error) => {
+        // Without this handler, a permission/index/network error silently
+        // kills the listener and liveReports just stays empty forever —
+        // looks like incidents "never appear" with zero indication why.
+        console.error("reports onSnapshot failed:", error);
+        setLiveDataError(`Live reports feed error: ${error.message}`);
+      },
+    );
   }, []);
 
   useEffect(() => {
@@ -72,16 +84,24 @@ export default function CommandCenter() {
     const incidentsQuery = query(
       collection(db, "incidents"),
       orderBy("updatedAt", "desc"),
-      limit(8),
+      limit(50),
     );
 
-    return onSnapshot(incidentsQuery, (snapshot) => {
-      setLiveAlertIncidents(
-        snapshot.docs
-          .map((doc) => reportToIncident(doc.id, doc.data() as FirestoreReport))
-          .filter((incident) => incident.status !== "resolved"),
-      );
-    });
+    return onSnapshot(
+      incidentsQuery,
+      (snapshot) => {
+        setLiveDataError(null);
+        setLiveAlertIncidents(
+          snapshot.docs
+            .map((doc) => reportToIncident(doc.id, doc.data() as FirestoreReport))
+            .filter((incident) => incident.status !== "resolved"),
+        );
+      },
+      (error) => {
+        console.error("incidents onSnapshot failed:", error);
+        setLiveDataError(`Live incidents feed error: ${error.message}`);
+      },
+    );
   }, []);
 
   // Kick off the sensor/satellite-only ambient scan (no citizen report
@@ -211,6 +231,21 @@ export default function CommandCenter() {
 
   return (
     <section className="command-center-grid">
+      {liveDataError && (
+        <div
+          style={{
+            gridColumn: "1 / -1",
+            background: "#7a1f1f",
+            color: "white",
+            padding: "10px 16px",
+            borderRadius: "8px",
+            fontWeight: 600,
+            fontSize: "0.85rem",
+          }}
+        >
+          {liveDataError} — incidents may be missing or stale. Check the console / Firestore rules & indexes.
+        </div>
+      )}
       <div className="command-stat-grid" aria-label="Command Center metrics">
         {stats.map((stat) => (
           <article className="command-stat-card" key={stat.label}>

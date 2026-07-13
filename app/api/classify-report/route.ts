@@ -18,13 +18,13 @@ const GEMINI_MODEL = "gemini-2.5-flash";
 const CLASSIFICATION_PROMPT = `You are an air quality sensor for a municipal pollution monitoring system in Delhi NCR. 
 Analyze this citizen-uploaded photo for VISIBLE, active air pollution signals only.
 
-✅ Count as pollution:
+ Count as pollution:
 - Smoke plumes (from fires, vehicles, industrial stacks)
 - Visible dust clouds (from construction or soil disturbance)
 - Open flames or actively burning material
 - Dense atmospheric haze with a clear pollution source visible
 
-❌ Do NOT flag as pollution:
+ Do NOT flag as pollution:
 - Natural fog, morning mist, or overcast/cloudy sky
 - Camera glare, lens flare, or blurry/dark photos
 - Garbage or waste with NO visible smoke or dust rising from it
