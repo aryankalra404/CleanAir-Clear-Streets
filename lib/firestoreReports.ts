@@ -37,6 +37,15 @@ export interface FirestoreReport {
   dispatchedAction?: string;
   dispatchedAt?: Timestamp;
   resolvedAt?: Timestamp;
+  // Written by ambientScan.ts — carries the full signal picture for the
+  // map popup without committing to a single hazard label.
+  possibleSources?: string[];
+  elevatedPollutants?: {
+    pm25?: number | null;
+    pm10?: number | null;
+    no2?: number | null;
+    so2?: number | null;
+  };
 }
 
 function normalizeStatus(status?: FirestoreReport["status"]): IncidentStatus {
@@ -108,7 +117,17 @@ export function resolveIncidentHazardType(report: {
   if (lowerId.includes("smog") || lowerId.includes("traffic")) return "smog";
 
   // Step 3: Final fallback — use Gemini's generic visual type if no hazardId.
-  if (type === "dust" || type === "fire" || type === "industrial" || type === "smog") {
+  // "particulate" only ever comes from ambientScan.ts (sensor/satellite-only
+  // detections, no citizen report/hazardId at all) — without it in this list,
+  // every ambient particulate doc would silently fall through to the "smog"
+  // default below and lose the "we don't know the source yet" distinction.
+  if (
+    type === "dust" ||
+    type === "fire" ||
+    type === "industrial" ||
+    type === "smog" ||
+    type === "particulate"
+  ) {
     return type as HazardType;
   }
   if (type === "smoke" || type === "haze") return "smog";
@@ -146,6 +165,8 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     dispatchedAction: report.dispatchedAction,
     dispatchedAt: report.dispatchedAt?.toDate().toISOString(),
     resolvedAt: report.resolvedAt?.toDate().toISOString(),
+    possibleSources: report.possibleSources,
+    elevatedPollutants: report.elevatedPollutants,
   };
   return incident;
 }

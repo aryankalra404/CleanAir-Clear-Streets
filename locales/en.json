@@ -185,6 +185,7 @@
   "hazard_smog": "Smog",
   "hazard_dust": "Dust",
   "hazard_industrial": "Industrial",
+  "hazard_particulate": "Elevated Particulate Pollution",
   "status_pending": "Pending",
   "status_under_review": "Under review",
   "status_resolved": "Resolved",

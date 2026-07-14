@@ -11,10 +11,21 @@ const PAGE_LIMIT = 1000;
 const REQUEST_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
 const NCR_STATES = ["Delhi", "Haryana", "Uttar Pradesh", "Rajasthan"];
-const WHO_PM25_REFERENCE = 15;
-const WHO_PM10_REFERENCE = 45;
-const WHO_NO2_REFERENCE = 25;
-const WHO_SO2_REFERENCE = 40;
+// CPCB India national 24h ambient air quality standards (µg/m³).
+// These are used for *event-detection* delta calculations — i.e. deciding
+// whether a sensor reading is anomalously high enough to confirm a citizen
+// report. WHO guidelines (PM2.5=15, PM10=45, NO2=25, SO2=40) are the right
+// standard for health-risk display, but Delhi's ambient baseline already
+// exceeds them every single day, so using WHO as the reference meant sensor
+// support triggered on 100% of reports regardless of whether a real event
+// occurred. CPCB values reflect what India's own pollution board considers
+// the 24h limit — a reading must exceed THESE by ≥50% to count as a sensor
+// confirmation of a citizen-reported incident.
+// (WHO values are still used in the health-risk badge layer, not here.)
+const WHO_PM25_REFERENCE = 60;  // CPCB 24h standard (WHO: 15)
+const WHO_PM10_REFERENCE = 100; // CPCB 24h standard (WHO: 45)
+const WHO_NO2_REFERENCE = 80;   // CPCB 24h standard (WHO: 25)
+const WHO_SO2_REFERENCE = 80;   // CPCB 24h standard (WHO: 40)
 
 type CpcbApiResponse = {
   records?: CpcbRecord[];

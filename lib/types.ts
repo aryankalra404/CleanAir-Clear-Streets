@@ -1,4 +1,9 @@
-export type HazardType = "fire" | "smog" | "dust" | "industrial";
+// "particulate" is reserved for sensor/satellite-only (ambient) detections
+// where a PM2.5/aerosol spike is elevated but there's no citizen photo yet
+// to tell a fire apart from general smog/haze — see lib/ambientScan.ts.
+// Citizen reports always resolve to a specific "fire" or "smog" once Gemini
+// has actually looked at a photo (lib/firestoreReports.ts).
+export type HazardType = "fire" | "smog" | "dust" | "industrial" | "particulate";
 
 export type Severity = "low" | "medium" | "critical";
 
@@ -59,8 +64,9 @@ export interface IncidentEvidence {
     lastPassTime: string;
     freshness: "fresh" | "stale";
     // 0-1 anomaly score for the hazard-relevant Sentinel-5P band
-    // (aerosol index for fire/dust, NO2 for industrial/smog). Used to decide
-    // whether satellite data actually *supports* a hazard, not just context.
+    // (aerosol index for dust/particulate, NO2 for industrial/smog). Used to
+    // decide whether satellite data actually *supports* a hazard, not just
+    // context.
     anomalyScore?: number;
     hazardWeight?: number;
   };
@@ -103,6 +109,18 @@ export interface Incident {
   dispatchedAction?: string;
   dispatchedAt?: string;
   resolvedAt?: string;
+  // Ambient-scan-only fields — set when source is sensor/satellite and no
+  // citizen report exists. Lists every hazard category whose sensor/satellite
+  // threshold was crossed (e.g. ["dust","industrial"]) so the map can show
+  // "Possible sources" rather than picking one label. elevatedPollutants carries
+  // the raw µg/m³ values that triggered the alert.
+  possibleSources?: string[];
+  elevatedPollutants?: {
+    pm25?: number | null;
+    pm10?: number | null;
+    no2?: number | null;
+    so2?: number | null;
+  };
 }
 
 export interface ForecastPoint {

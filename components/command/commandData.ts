@@ -5,6 +5,10 @@ const actionByHazard: Record<Incident["hazardType"], string> = {
   smog: "Issue traffic advisory",
   dust: "Deploy water-mist cannon",
   industrial: "Notify pollution control board",
+  // Sensor/satellite flagged elevated particulate but the source isn't
+  // confirmed — send a team to identify it before committing fire/traffic/
+  // dust-specific resources.
+  particulate: "Dispatch inspection team to confirm source",
 };
 
 // Template stat cards. Every value/detail here is a placeholder that

@@ -114,6 +114,7 @@ const hazardColor: Record<string, string> = {
   smog: "#3b82f6", // Blue
   dust: "#f59e0b", // Orange
   industrial: "#a855f7", // Purple
+  particulate: "#eab308", // Amber — visually distinct from all 4 confirmed types
 };
 
 function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
@@ -226,7 +227,15 @@ export default function GoogleHotspotMap({
 
     incidents.forEach((incident) => {
       const h3CellId = incident.h3CellId ?? latLngToCell(incident.latitude, incident.longitude, 8);
-      const groupId = `${h3CellId}-${incident.hazardType}`;
+      // Ambient incidents (sensor/satellite-only, no citizen reports) are now
+      // written as one doc per cell with ID "ambient-{h3}" — group them by
+      // h3CellId alone so they never split into multiple markers. Citizen
+      // incidents still group by h3+hazardType to keep fire/smog/dust/industrial
+      // visually distinct when they co-exist in the same cell.
+      const isAmbient = incident.id.startsWith("firestore-ambient-") && !incident.possibleSources?.length
+        ? false // old-style ambient-h3-hazardType docs: still dedupe by hazard until they age out
+        : (incident.source !== "citizen" && (incident.evidence?.citizenSignal?.reportCount ?? 0) === 0);
+      const groupId = isAmbient ? h3CellId : `${h3CellId}-${incident.hazardType}`;
 
       if (!groupMap.has(groupId)) {
         groupMap.set(groupId, {
@@ -435,12 +444,56 @@ export default function GoogleHotspotMap({
 
     // Find which cluster this incident belongs to so we can display cluster counts in the info window
     const h3CellId = selectedIncident.h3CellId ?? latLngToCell(selectedIncident.latitude, selectedIncident.longitude, 8);
-    const groupId = `${h3CellId}-${selectedIncident.hazardType}`;
+    const isAmbient = selectedIncident.source !== "citizen" && (selectedIncident.evidence?.citizenSignal?.reportCount ?? 0) === 0;
+    const groupId = isAmbient ? h3CellId : `${h3CellId}-${selectedIncident.hazardType}`;
     const cluster = clusters.find((c) => c.id === groupId);
     
     const reportCount = cluster?.promotedIncident?.linkedReportIds?.length ?? cluster?.incidents.length ?? 1;
     const isPromoted = !!cluster?.promotedIncident;
     const evidenceSummary = getEvidenceSourceSummary(selectedIncident);
+
+    // Build the elevated-pollutant headline for ambient/sensor-only incidents:
+    // e.g. "Elevated PM2.5 · NO2" from the hazardLabel stored on the incident,
+    // or fall back to constructing it from elevatedPollutants if hazardLabel
+    // is a legacy value.
+    function buildAmbientInfoWindow(incident: Incident): string {
+      // Primary: use the hazardLabel written by ambientScan ("Elevated PM2.5 · NO2")
+      const headline = incident.neighborhood;
+      const pollutantLine = (() => {
+        // Try elevatedPollutants values for inline µg/m³ display
+        const ep = incident.elevatedPollutants;
+        const parts: string[] = [];
+        if (ep?.pm25 != null && ep.pm25 > 0) parts.push(`PM2.5 ${Math.round(ep.pm25)} µg/m³`);
+        if (ep?.pm10 != null && ep.pm10 > 0) parts.push(`PM10 ${Math.round(ep.pm10)} µg/m³`);
+        if (ep?.no2 != null && ep.no2 > 0) parts.push(`NO2 ${Math.round(ep.no2)} µg/m³`);
+        if (ep?.so2 != null && ep.so2 > 0) parts.push(`SO2 ${Math.round(ep.so2)} µg/m³`);
+        return parts.length > 0 ? parts.join(" &middot; ") : "";
+      })();
+
+      const sourceLine = (() => {
+        const src = incident.possibleSources ?? [];
+        if (src.length === 0) return "";
+        const labels: Record<string, string> = {
+          dust: "Dust / Construction",
+          industrial: "Industrial Emissions",
+          particulate: "Elevated Fine Particulate",
+        };
+        return "Possible sources: " + src.map((s) => labels[s] ?? s).join(" &middot; ");
+      })();
+
+      const tierLine = evidenceSummary.count === 1
+        ? t("map_evidence_source_single")
+        : t("map_evidence_sources").replace("{count}", evidenceSummary.count.toString());
+
+      return `
+        <div class="google-map-infowindow ambient-infowindow">
+          <strong>${headline}</strong>
+          ${pollutantLine ? `<span class="infowindow-pollutants">${pollutantLine}</span>` : ""}
+          ${sourceLine ? `<span class="infowindow-sources">${sourceLine}</span>` : ""}
+          ${mode === "operations" ? `<span class="infowindow-tier">${tierLine} &middot; ${evidenceSummary.label}</span>` : ""}
+        </div>
+      `;
+    }
     
     let content = "";
     if (!isPromoted && mode === "operations") {
@@ -457,6 +510,9 @@ export default function GoogleHotspotMap({
           <span style="color: #64748b; font-size: 13px;">${t("hazard_" + selectedIncident.hazardType) || selectedIncident.hazardType} · ${reportCount} ${t("map_reported")}</span>
         </div>
       `;
+    } else if (isAmbient && selectedIncident.possibleSources) {
+      // Ambient sensor/satellite-only incidents get the rich pollutant+source breakdown.
+      content = buildAmbientInfoWindow(selectedIncident);
     } else {
       content = `
         <div class="google-map-infowindow">

@@ -10,10 +10,34 @@ import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
  * catch clearly elevated readings without requiring hand-tuned per-station
  * calibration.
  */
-export const SENSOR_PROXIMITY_KM = 3; // CPCB stations are sparse; anything further isn't "hyper-local"
+export const SENSOR_PROXIMITY_KM = 1.5; // stations beyond this aren't hyper-local to the reported incident
 export const SENSOR_SUPPORT_DELTA_PCT = 50; // % above WHO reference for the hazard-relevant pollutant
 export const SATELLITE_SUPPORT_SCORE = 0.5; // 0-1 anomaly score (see earthEngineSatellite.ts)
 export const CITIZEN_PROMOTION_THRESHOLD = 3;
+
+// Dust/construction events skew heavily toward coarse particulate (PM10 well
+// above PM2.5), while combustion/traffic/general haze skews toward fine
+// particulate (PM10 and PM2.5 stay close together, since most of PM10's
+// mass *is* PM2.5). A bare "PM10 crossed the WHO threshold" check alone
+// can't tell dust apart from an ordinary bad-air day — PM10 rises on both.
+// This ratio check adds that missing specificity for the "dust" hazard type.
+export const DUST_PM_RATIO_THRESHOLD = 1.8; // PM10:PM2.5 — below this, treat as non-dust particulate
+
+/**
+ * True if the PM10:PM2.5 ratio indicates coarse (dust-like) particulate
+ * rather than fine (combustion/haze) particulate. Missing data defaults to
+ * true (permissive) — CPCB stations occasionally report one pollutant but
+ * not the other, and we don't want a missing PM2.5 reading to block a
+ * legitimately elevated PM10 dust reading that would have passed before
+ * this check existed.
+ */
+export function isDustDominant(
+  pm10: number | null | undefined,
+  pm25: number | null | undefined,
+): boolean {
+  if (pm10 == null || pm25 == null || pm25 <= 0) return true;
+  return pm10 / pm25 >= DUST_PM_RATIO_THRESHOLD;
+}
 
 
 
@@ -30,7 +54,9 @@ export function checkStoredSensorSupport(
   const distanceKm = sensor.distanceKm ?? null;
   if (distanceKm === null || distanceKm > SENSOR_PROXIMITY_KM) return false;
   const delta = sensor.primaryDelta ?? sensor.pm25Delta ?? 0;
-  return delta >= SENSOR_SUPPORT_DELTA_PCT;
+  if (delta < SENSOR_SUPPORT_DELTA_PCT) return false;
+  if (hazardType === "dust" && !isDustDominant(sensor.pm10, sensor.pm25)) return false;
+  return true;
 }
 
 export function checkStoredSatelliteSupport(

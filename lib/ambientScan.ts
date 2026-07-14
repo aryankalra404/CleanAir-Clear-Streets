@@ -12,6 +12,7 @@ import {
   SENSOR_SUPPORT_DELTA_PCT,
   SATELLITE_SUPPORT_SCORE,
   determineTier,
+  isDustDominant,
   tierPromotionReason,
 } from "@/lib/supportEvidence";
 import type { HazardType } from "@/lib/types";
@@ -31,15 +32,19 @@ export type SatelliteSupportResult = {
 
 /**
  * Which satellite band is relevant for which hazard.
- * - dust / fire  -> aerosol index (particulate-driven, "fireDustSmoke" weight)
- * - industrial / smog -> NO2 (combustion/traffic-driven, "industrialTraffic" weight)
+ * - dust / particulate -> aerosol index (particulate-driven, "fireDustSmoke" weight)
+ * - industrial / smog / fire -> NO2 or aerosol depending on channel (see below)
+ *
+ * "particulate" takes over the aerosol-index channel that used to be split
+ * across separate "fire" and "smog" checks — see the HAZARD_TYPES comment
+ * below for why those two were merged.
  */
 export function getSatelliteHazardWeight(
   hazardType: HazardType,
   satellite: Pick<SatelliteDataResult, "hazardWeights"> | null | undefined,
 ): number {
   if (!satellite) return 0;
-  if (hazardType === "dust" || hazardType === "fire") {
+  if (hazardType === "dust" || hazardType === "fire" || hazardType === "particulate") {
     return satellite.hazardWeights.fireDustSmoke;
   }
   return satellite.hazardWeights.industrialTraffic;
@@ -60,9 +65,19 @@ export function checkSensorSupport(
   }
 
   // getPrimaryPollutant already maps hazard -> the right pollutant:
-  // dust -> PM10, industrial -> NO2/SO2, fire/smog -> PM2.5.
+  // dust -> PM10, industrial -> NO2/SO2, particulate/fire/smog -> PM2.5
+  // (getPrimaryPollutant only special-cases "dust" and "industrial";
+  // everything else — including our new "particulate" bucket — falls
+  // through to its PM2.5 default, which is exactly what we want here).
   const primary = getPrimaryPollutant(geminiType ?? hazardType, station);
-  const supported = primary.value !== null && primary.delta >= SENSOR_SUPPORT_DELTA_PCT;
+  let supported = primary.value !== null && primary.delta >= SENSOR_SUPPORT_DELTA_PCT;
+
+  // PM10 alone can't tell dust apart from an ordinary bad-air day (PM10
+  // rises on both) — require the PM10:PM2.5 ratio to actually look
+  // dust-like, not just "PM10 crossed a number".
+  if (supported && hazardType === "dust" && !isDustDominant(station.pm10, station.pm25)) {
+    supported = false;
+  }
 
   return {
     supported,
@@ -100,7 +115,28 @@ export const MONITORED_CELLS: Array<{ label: string; lat: number; lng: number }>
   { label: "Bawana Industrial Area", lat: 28.8039, lng: 77.0469 },
 ];
 
-const HAZARD_TYPES: HazardType[] = ["dust", "fire", "industrial", "smog"];
+// Ambient (sensor/satellite-only, zero citizen reports) detection can only
+// test 3 real, independent hypotheses — not 4. "fire" and "smog" both
+// resolved to the exact same underlying test (PM2.5 delta + aerosol index
+// anomaly), so testing them separately meant a single elevated PM2.5/AI
+// reading would cross both thresholds at once and stack two near-identical
+// pins on the same spot. A CPCB PM2.5 sensor or a Sentinel-5P aerosol
+// reading can't tell a fire apart from general haze/smog without a photo —
+// only Gemini looking at an actual citizen-submitted image can make that
+// call (see resolveIncidentHazardType in firestoreReports.ts). So ambient
+// scan reports the honest, source-agnostic "particulate" bucket instead;
+// once a citizen report comes in for the same cell, promoteCellIfThreshold
+// Passed will resolve it to a specific fire/smog hazardType from the photo.
+//
+// We run all three checks per cell, collect whichever ones fired into
+// possibleSources, then write ONE doc per cell — not one per hazard — so
+// a single map pin shows the full picture rather than 2-3 overlapping pins.
+const HAZARD_TYPES: HazardType[] = ["dust", "industrial", "particulate"];
+
+// Priority order for picking the single hazardType that drives the map icon
+// color when multiple checks fire. industrial > dust > particulate keeps the
+// most specific/actionable type on top.
+const HAZARD_PRIORITY: HazardType[] = ["industrial", "dust", "particulate"];
 
 export type AmbientScanResult = {
   cell: string;
@@ -127,95 +163,142 @@ export async function scanAmbientHotspots(): Promise<{
       getSatelliteDataForPoint(cell.lat, cell.lng).catch(() => null),
     ]);
 
+    // Run all three checks and collect results — we write ONE doc per cell,
+    // not one per hazard, to avoid stacking 2-3 markers on the same spot.
+    type CheckResult = {
+      hazardType: HazardType;
+      sensorResult: ReturnType<typeof checkSensorSupport>;
+      satelliteResult: ReturnType<typeof checkSatelliteSupport>;
+      tier: "sensor_detected" | "satellite_detected" | "sensor_satellite_confirmed";
+    };
+    const passedChecks: CheckResult[] = [];
+
     for (const hazardType of HAZARD_TYPES) {
       const sensorResult = checkSensorSupport(hazardType, station);
       const satelliteResult = checkSatelliteSupport(hazardType, satellite);
-
       const tier = determineTier({
         reportCount: 0,
         sensorSupported: sensorResult.supported,
         satelliteSupported: satelliteResult.supported,
       });
 
-      // Ambient scan only ever produces the three no-citizen tiers.
       if (
-        tier !== "sensor_detected" &&
-        tier !== "satellite_detected" &&
-        tier !== "sensor_satellite_confirmed"
+        tier === "sensor_detected" ||
+        tier === "satellite_detected" ||
+        tier === "sensor_satellite_confirmed"
       ) {
-        continue;
+        passedChecks.push({ hazardType, sensorResult, satelliteResult, tier });
       }
+    }
 
-      const source: "sensor" | "satellite" =
-        tier === "satellite_detected" ? "satellite" : "sensor";
-      const confidence = Math.max(
-        sensorResult.supported ? Math.min(95, 50 + sensorResult.deltaPct / 2) : 0,
-        satelliteResult.supported ? Math.round(satelliteResult.hazardWeight * 100) : 0,
-      );
+    // Nothing triggered for this cell — skip it entirely.
+    if (passedChecks.length === 0) continue;
 
-      await setDoc(
-        doc(db, "incidents", `ambient-${h3CellId}-${hazardType}`),
-        {
-          aiConfidence: Math.round(confidence),
-          createdAt: serverTimestamp(),
-          geminiClassification: {
-            confidence: Math.round(confidence),
-            description: `${hazardType} — ${tierPromotionReason(tier, 0)}`,
-            severity: getSeverity(confidence),
-            type: hazardType,
+    // Pick the single dominant hazardType for icon color (industrial > dust > particulate).
+    const dominant =
+      passedChecks.find((c) => c.hazardType === HAZARD_PRIORITY[0]) ??
+      passedChecks.find((c) => c.hazardType === HAZARD_PRIORITY[1]) ??
+      passedChecks[0];
+
+    const { sensorResult, satelliteResult, tier } = dominant;
+    const hazardType = dominant.hazardType;
+
+    // All source categories whose threshold was crossed — shown in the popup
+    // as "Possible sources" so the operator sees the full picture.
+    const possibleSources = passedChecks.map((c) => c.hazardType);
+
+    const source: "sensor" | "satellite" =
+      tier === "satellite_detected" ? "satellite" : "sensor";
+
+    const confidence = Math.max(
+      sensorResult.supported ? Math.min(95, 50 + sensorResult.deltaPct / 2) : 0,
+      satelliteResult.supported ? Math.round(satelliteResult.hazardWeight * 100) : 0,
+    );
+
+    // Build a label that lists which pollutants are actually elevated,
+    // e.g. "Elevated PM2.5 · NO2" — honest and immediately actionable.
+    const elevatedNames: string[] = [];
+    if (station?.pm25 != null && station.pm25 > 0) elevatedNames.push("PM2.5");
+    if (station?.pm10 != null && station.pm10 > 0) elevatedNames.push("PM10");
+    if (station?.no2 != null && station.no2 > 0) elevatedNames.push("NO2");
+    if (station?.so2 != null && station.so2 > 0) elevatedNames.push("SO2");
+    const elevatedLabel = elevatedNames.length > 0
+      ? `Elevated ${elevatedNames.join(" · ")}`
+      : "Sensor anomaly detected";
+
+    // Doc ID has no hazard suffix — one doc per cell, period.
+    await setDoc(
+      doc(db, "incidents", `ambient-${h3CellId}`),
+      {
+        aiConfidence: Math.round(confidence),
+        createdAt: serverTimestamp(),
+        geminiClassification: {
+          confidence: Math.round(confidence),
+          description: `${elevatedLabel} — ${tierPromotionReason(tier, 0)}`,
+          severity: getSeverity(confidence),
+          type: hazardType,
+        },
+        h3CellId,
+        hazardLabel: elevatedLabel,
+        // possibleSources lets the map popup list all triggered categories
+        // ("Possible sources: Dust, Industrial") without committing to one.
+        possibleSources,
+        // Raw sensor readings so the popup can display actual µg/m³ values.
+        elevatedPollutants: {
+          pm25: station?.pm25 ?? null,
+          pm10: station?.pm10 ?? null,
+          no2: station?.no2 ?? null,
+          so2: station?.so2 ?? null,
+        },
+        location: { label: cell.label, lat: String(cell.lat), lng: String(cell.lng) },
+        photoUrl: "",
+        source,
+        status: "under_review",
+        updatedAt: serverTimestamp(),
+        validation: {
+          alertReason: tierPromotionReason(tier, 0),
+          alertTier: true,
+          tier,
+          citizenSignal: { averageConfidence: 0, reportCount: 0, windowMinutes: 0 },
+          coverage: {
+            label: sensorResult.distanceKm !== null ? `${sensorResult.distanceKm.toFixed(1)} km to nearest station` : "No nearby station",
+            level: sensorResult.distanceKm !== null && sensorResult.distanceKm <= 1 ? "good" : "limited",
+            nearestSensorKm: sensorResult.distanceKm ?? 5,
           },
-          h3CellId,
-          hazardLabel: `Ambient ${hazardType} detection`,
-          location: { label: cell.label, lat: String(cell.lat), lng: String(cell.lng) },
-          photoUrl: "",
-          source,
-          status: "under_review",
-          updatedAt: serverTimestamp(),
-          validation: {
-            alertReason: tierPromotionReason(tier, 0),
-            alertTier: true,
-            tier,
-            citizenSignal: { averageConfidence: 0, reportCount: 0, windowMinutes: 0 },
-            coverage: {
-              label: sensorResult.distanceKm !== null ? `${sensorResult.distanceKm.toFixed(1)} km to nearest station` : "No nearby station",
-              level: sensorResult.distanceKm !== null && sensorResult.distanceKm <= 1 ? "good" : "limited",
-              nearestSensorKm: sensorResult.distanceKm ?? 5,
-            },
-            fusion: {
-              coverageAdjusted: false,
-              finalConfidence: Math.round(confidence),
-              h3CellId,
-              satelliteWeight: satelliteResult.hazardWeight,
-              sensorWeight: sensorResult.supported ? 0.4 : 0,
-              visualWeight: 0,
-            },
-            promotionReason: tierPromotionReason(tier, 0),
-            satellite: {
-              freshness: satellite && !satellite.error ? "fresh" : "stale",
-              lastPassTime: satellite?.timestamp ?? "unavailable",
-              signal: satelliteResult.supported
-                ? "Anomaly crosses hazard threshold"
-                : "No decisive anomaly",
-              source: "Earth Engine",
-              anomalyScore: satelliteResult.hazardWeight,
-              hazardWeight: satelliteResult.hazardWeight,
-            },
-            sensor: {
-              pm25Delta: sensorResult.pollutantName === "PM2.5" ? sensorResult.deltaPct : 0,
-              primaryDelta: sensorResult.deltaPct,
-              primaryName: sensorResult.pollutantName,
-              primaryValue: sensorResult.pollutantValue,
-              distanceKm: sensorResult.distanceKm ?? undefined,
-              source: "CPCB",
-              trend: sensorResult.supported ? "rising" : "flat",
-            },
+          fusion: {
+            coverageAdjusted: false,
+            finalConfidence: Math.round(confidence),
+            h3CellId,
+            satelliteWeight: satelliteResult.hazardWeight,
+            sensorWeight: sensorResult.supported ? 0.4 : 0,
+            visualWeight: 0,
+          },
+          promotionReason: tierPromotionReason(tier, 0),
+          satellite: {
+            freshness: satellite && !satellite.error ? "fresh" : "stale",
+            lastPassTime: satellite?.timestamp ?? "unavailable",
+            signal: satelliteResult.supported
+              ? "Anomaly crosses hazard threshold"
+              : "No decisive anomaly",
+            source: "Earth Engine",
+            anomalyScore: satelliteResult.hazardWeight,
+            hazardWeight: satelliteResult.hazardWeight,
+          },
+          sensor: {
+            pm25Delta: sensorResult.pollutantName === "PM2.5" ? sensorResult.deltaPct : 0,
+            primaryDelta: sensorResult.deltaPct,
+            primaryName: sensorResult.pollutantName,
+            primaryValue: sensorResult.pollutantValue,
+            distanceKm: sensorResult.distanceKm ?? undefined,
+            source: "CPCB",
+            trend: sensorResult.supported ? "rising" : "flat",
           },
         },
-        { merge: true },
-      );
+      },
+      { merge: true },
+    );
 
-      promoted.push({ cell: cell.label, hazardType, tier, h3CellId });
-    }
+    promoted.push({ cell: cell.label, hazardType, tier, h3CellId });
   }
 
   return { scanned: MONITORED_CELLS.length, promoted };

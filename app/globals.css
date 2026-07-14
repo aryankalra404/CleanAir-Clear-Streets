@@ -1015,6 +1015,29 @@ a {
   text-transform: capitalize;
 }
 
+/* Ambient sensor/satellite info window — overrides text-transform so pollutant
+   names like "PM2.5", "NO2", "SO2" render correctly rather than as "pm2.5". */
+.ambient-infowindow span {
+  text-transform: none;
+}
+
+.infowindow-pollutants {
+  color: #1e3a5f;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.infowindow-sources {
+  color: #667085;
+  font-size: 0.75rem;
+}
+
+.infowindow-tier {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
 .command-hero-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 430px;

@@ -5,6 +5,7 @@ const fallbackH3ByHazard: Record<HazardType, string> = {
   dust: "883da118c3fffff",
   fire: "883da118d7fffff",
   industrial: "883da1198bfffff",
+  particulate: "883da1189bfffff",
   smog: "883da1189bfffff",
 };
 
