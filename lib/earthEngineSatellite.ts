@@ -56,6 +56,9 @@ export type SatelliteDataResult = {
     industrialTraffic: number;
   };
   source: "Earth Engine / Sentinel-5P";
+  computedAt: string;
+  windowStart: string;
+  windowEnd: string;
   timestamp: string;
   cached: boolean;
   cacheKey: string;
@@ -70,12 +73,16 @@ type CacheEntry = {
 const cache = new Map<string, CacheEntry>();
 let initPromise: Promise<void> | null = null;
 
-function getCacheKey(lat: number, lng: number) {
+function getBaseCacheKey(lat: number, lng: number) {
   return getH3CellId({
     label: "Satellite sample",
     lat: String(lat),
     lng: String(lng),
   });
+}
+
+function getCacheKey(lat: number, lng: number, windowEndDate: string) {
+  return `${getBaseCacheKey(lat, lng)}-${windowEndDate}`;
 }
 
 function clampScore(value: number) {
@@ -175,7 +182,13 @@ function getInfo<T>(eeObject: {
   });
 }
 
-function buildFallback(cacheKey: string, error: string): SatelliteDataResult {
+function buildFallback(
+  cacheKey: string,
+  error: string,
+  windowStart: string,
+  windowEnd: string,
+): SatelliteDataResult {
+  const computedAt = new Date().toISOString();
   return {
     rawValue: null,
     anomalyScore: 0,
@@ -196,7 +209,10 @@ function buildFallback(cacheKey: string, error: string): SatelliteDataResult {
       industrialTraffic: 0,
     },
     source: "Earth Engine / Sentinel-5P",
-    timestamp: new Date().toISOString(),
+    computedAt,
+    windowStart,
+    windowEnd,
+    timestamp: computedAt,
     cached: false,
     cacheKey,
     error,
@@ -237,8 +253,15 @@ async function reduceMedianBand(
 export async function getSatelliteDataForPoint(
   lat: number,
   lng: number,
+  referenceTime: Date = new Date(),
 ): Promise<SatelliteDataResult> {
-  const cacheKey = getCacheKey(lat, lng);
+  const end = Number.isFinite(referenceTime.getTime()) ? referenceTime : new Date();
+  const endDate = end.toISOString().slice(0, 10);
+  const currentStart = new Date(
+    end.getTime() - CURRENT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const currentStartDate = currentStart.toISOString().slice(0, 10);
+  const cacheKey = getCacheKey(lat, lng, endDate);
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return { ...cached.value, cached: true };
@@ -251,16 +274,10 @@ export async function getSatelliteDataForPoint(
 
     await withTimeout(ensureEarthEngineReady(), REQUEST_TIMEOUT_MS, "Earth Engine auth");
 
-    const end = new Date();
-    const currentStart = new Date(
-      end.getTime() - CURRENT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-    );
     const baselineStart = new Date(
       currentStart.getTime() - BASELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     );
-    const currentStartDate = currentStart.toISOString().slice(0, 10);
     const baselineStartDate = baselineStart.toISOString().slice(0, 10);
-    const endDate = end.toISOString().slice(0, 10);
 
     const region = ee.Geometry.Point([lng, lat]).buffer(SAMPLE_BUFFER_METERS);
     const [no2Raw, no2Baseline, aerosolRaw, aerosolBaseline] = await Promise.all([
@@ -314,6 +331,7 @@ export async function getSatelliteDataForPoint(
     const industrialTrafficWeight = Math.max(no2Anomaly, no2Chronic);
     const fireDustSmokeWeight = Math.max(aerosolAnomaly, aerosolChronic);
     const anomalyScore = Math.max(industrialTrafficWeight, fireDustSmokeWeight);
+    const computedAt = new Date().toISOString();
     const value: SatelliteDataResult = {
       rawValue: no2Raw,
       anomalyScore,
@@ -334,7 +352,10 @@ export async function getSatelliteDataForPoint(
         industrialTraffic: industrialTrafficWeight,
       },
       source: "Earth Engine / Sentinel-5P",
-      timestamp: new Date().toISOString(),
+      computedAt,
+      windowStart: currentStartDate,
+      windowEnd: endDate,
+      timestamp: computedAt,
       cached: false,
       cacheKey,
     };
@@ -349,6 +370,8 @@ export async function getSatelliteDataForPoint(
     return buildFallback(
       cacheKey,
       error instanceof Error ? error.message : "Unknown Earth Engine error.",
+      currentStartDate,
+      endDate,
     );
   }
 }

@@ -69,6 +69,8 @@ type StationWithDistance = GroupedStation & {
 
 export type NearbyStationReading = {
   stationName: string;
+  lat: number;
+  lng: number;
   distanceKm: number;
   pm25: number | null;
   pm10: number | null;
@@ -290,6 +292,8 @@ function toNearbyStationReading(station: StationWithDistance): NearbyStationRead
   return {
     co: station.co,
     distanceKm: station.distanceKm,
+    lat: station.lat,
+    lng: station.lng,
     lastUpdated: station.lastUpdated,
     nh3: station.nh3,
     no2: station.no2,
@@ -300,6 +304,21 @@ function toNearbyStationReading(station: StationWithDistance): NearbyStationRead
     source: "CPCB",
     stationName: station.stationName,
   };
+}
+
+export async function fetchAllStationReadings(): Promise<NearbyStationReading[]> {
+  try {
+    const stations = await fetchAllStations();
+    return stations
+      .filter((station) => hasUsablePollutantData({ ...station, distanceKm: 0 }))
+      .map((station) => toNearbyStationReading({ ...station, distanceKm: 0 }));
+  } catch (error) {
+    console.warn(
+      "Could not fetch CPCB station readings",
+      error instanceof Error ? error.message : error,
+    );
+    return [];
+  }
 }
 
 export async function fetchNearbyStations(

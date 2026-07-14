@@ -452,31 +452,40 @@ export default function GoogleHotspotMap({
     const isPromoted = !!cluster?.promotedIncident;
     const evidenceSummary = getEvidenceSourceSummary(selectedIncident);
 
-    // Build the elevated-pollutant headline for ambient/sensor-only incidents:
-    // e.g. "Elevated PM2.5 · NO2" from the hazardLabel stored on the incident,
-    // or fall back to constructing it from elevatedPollutants if hazardLabel
-    // is a legacy value.
+    // Build the sensor trigger line for ambient/sensor-only incidents.
+    // New docs use triggerPollutants; elevatedPollutants is raw legacy context.
     function buildAmbientInfoWindow(incident: Incident): string {
-      // Primary: use the hazardLabel written by ambientScan ("Elevated PM2.5 · NO2")
       const headline = incident.neighborhood;
       const pollutantLine = (() => {
-        // Try elevatedPollutants values for inline µg/m³ display
+        if (incident.triggerPollutants) {
+          const parts = incident.triggerPollutants.map((pollutant) => {
+            const value =
+              pollutant.value !== null ? ` ${Math.round(pollutant.value)} µg/m³` : "";
+            const delta =
+              pollutant.deltaPct > 0 ? ` (+${Math.round(pollutant.deltaPct)}%)` : "";
+            return `${pollutant.name}${value}${delta}`;
+          });
+          return parts.length > 0 ? `Trigger: ${parts.join(" &middot; ")}` : "";
+        }
+
         const ep = incident.elevatedPollutants;
         const parts: string[] = [];
         if (ep?.pm25 != null && ep.pm25 > 0) parts.push(`PM2.5 ${Math.round(ep.pm25)} µg/m³`);
         if (ep?.pm10 != null && ep.pm10 > 0) parts.push(`PM10 ${Math.round(ep.pm10)} µg/m³`);
         if (ep?.no2 != null && ep.no2 > 0) parts.push(`NO2 ${Math.round(ep.no2)} µg/m³`);
         if (ep?.so2 != null && ep.so2 > 0) parts.push(`SO2 ${Math.round(ep.so2)} µg/m³`);
-        return parts.length > 0 ? parts.join(" &middot; ") : "";
+        return parts.length > 0 ? `Observed: ${parts.join(" &middot; ")}` : "";
       })();
 
       const sourceLine = (() => {
         const src = incident.possibleSources ?? [];
         if (src.length === 0) return "";
         const labels: Record<string, string> = {
-          dust: "Dust / Construction",
-          industrial: "Industrial Emissions",
-          particulate: "Elevated Fine Particulate",
+          dust: "Likely dust / PM10 spike",
+          industrial: "Likely industrial emission",
+          particulate: "Fine particulate spike",
+          smog: "Likely smog trap",
+          fire: "Possible burning hotspot",
         };
         return "Possible sources: " + src.map((s) => labels[s] ?? s).join(" &middot; ");
       })();

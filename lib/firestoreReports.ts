@@ -40,6 +40,11 @@ export interface FirestoreReport {
   // Written by ambientScan.ts — carries the full signal picture for the
   // map popup without committing to a single hazard label.
   possibleSources?: string[];
+  triggerPollutants?: Array<{
+    deltaPct?: number;
+    name?: string;
+    value?: number | null;
+  }>;
   elevatedPollutants?: {
     pm25?: number | null;
     pm10?: number | null;
@@ -166,6 +171,13 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     dispatchedAt: report.dispatchedAt?.toDate().toISOString(),
     resolvedAt: report.resolvedAt?.toDate().toISOString(),
     possibleSources: report.possibleSources,
+    triggerPollutants: report.triggerPollutants
+      ?.filter((pollutant) => typeof pollutant.name === "string")
+      .map((pollutant) => ({
+        deltaPct: pollutant.deltaPct ?? 0,
+        name: pollutant.name ?? "Pollutant",
+        value: pollutant.value ?? null,
+      })),
     elevatedPollutants: report.elevatedPollutants,
   };
   return incident;

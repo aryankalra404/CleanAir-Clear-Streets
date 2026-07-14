@@ -49,6 +49,7 @@ function serializeSatellite(satellite: SatelliteDataResult | null) {
     anomalyScore: satellite.anomalyScore,
     cacheKey: satellite.cacheKey,
     cached: satellite.cached,
+    computedAt: satellite.computedAt,
     error: satellite.error ?? null,
     hazardWeights: {
       fireDustSmoke: satellite.hazardWeights.fireDustSmoke,
@@ -63,6 +64,8 @@ function serializeSatellite(satellite: SatelliteDataResult | null) {
     rawValue: satellite.rawValue,
     source: satellite.source,
     timestamp: satellite.timestamp,
+    windowEnd: satellite.windowEnd,
+    windowStart: satellite.windowStart,
   };
 }
 

@@ -1,8 +1,6 @@
 "use client";
 
 import type { Incident, Severity } from "@/lib/types";
-import Link from "next/link";
-import { useT } from "@/lib/languageContext";
 import { useEffect, useRef, useState } from "react";
 import { loadGoogleMaps, type GoogleMapInstance, type GoogleMapMarker } from "@/lib/googleMaps";
 import { CITY_CENTER } from "@/lib/mapConstants";
@@ -13,8 +11,7 @@ const severityColor: Record<Severity, string> = {
   low: "#10b981",
 };
 
-export default function HotspotPreview({ priorityIncidents, criticalCount }: { priorityIncidents: Incident[], criticalCount: number }) {
-  const t = useT();
+export default function HotspotPreview({ incidents }: { incidents: Incident[] }) {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRefs = useRef<GoogleMapMarker[]>([]);
@@ -62,7 +59,7 @@ export default function HotspotPreview({ priorityIncidents, criticalCount }: { p
     markerRefs.current.forEach(m => m.setMap(null));
     markerRefs.current = [];
 
-    priorityIncidents.forEach((incident) => {
+    incidents.forEach((incident) => {
       const color = severityColor[incident.severity] || severityColor.medium;
       const marker = new maps.Marker({
         map: mapRef.current,
@@ -70,17 +67,17 @@ export default function HotspotPreview({ priorityIncidents, criticalCount }: { p
         title: incident.neighborhood,
         icon: {
           url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" fill="${color}" fill-opacity="0.8" stroke="white" stroke-width="2"/>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="9" cy="9" r="7" fill="${color}" fill-opacity="0.9" stroke="white" stroke-width="2"/>
             </svg>
           `)}`,
-          scaledSize: new maps.Size(24, 24),
-          anchor: new maps.Point(12, 12),
+          scaledSize: new maps.Size(18, 18),
+          anchor: new maps.Point(9, 9),
         },
       });
       markerRefs.current.push(marker);
     });
-  }, [mapLoaded, priorityIncidents]);
+  }, [mapLoaded, incidents]);
 
   return (
     <aside className="hotspot-panel" aria-label="Live hotspot preview" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>

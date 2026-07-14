@@ -3,15 +3,20 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import HotspotPreview from "@/components/landing/HotspotPreview";
-import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, limit, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { reportToIncident, type FirestoreReport } from "@/lib/firestoreReports";
+import {
+  hasPollutionSignal,
+  reportToIncident,
+  type FirestoreReport,
+} from "@/lib/firestoreReports";
 import type { Incident } from "@/lib/types";
 import { useT } from "@/lib/languageContext";
 
 export default function HeroSection() {
   const t = useT();
   const [liveIncidents, setLiveIncidents] = useState<Incident[]>([]);
+  const [citizenReports, setCitizenReports] = useState<Incident[]>([]);
 
   useEffect(() => {
     if (!isFirebaseConfigured || !db) return;
@@ -19,6 +24,28 @@ export default function HeroSection() {
     return onSnapshot(incidentsQuery, (snapshot) => {
       setLiveIncidents(
         snapshot.docs.map((doc) => reportToIncident(doc.id, doc.data() as FirestoreReport))
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured || !db) return;
+    const reportsQuery = query(
+      collection(db, "reports"),
+      orderBy("createdAt", "desc"),
+      limit(20),
+    );
+
+    return onSnapshot(reportsQuery, (snapshot) => {
+      setCitizenReports(
+        snapshot.docs
+          .map((doc) => ({
+            data: doc.data() as FirestoreReport,
+            id: doc.id,
+          }))
+          .filter((report) => hasPollutionSignal(report.data))
+          .map((report) => reportToIncident(report.id, report.data))
+          .filter((incident) => incident.status !== "resolved"),
       );
     });
   }, []);
@@ -89,8 +116,7 @@ export default function HeroSection() {
       </div>
 
       <HotspotPreview 
-        priorityIncidents={activeIncidents.sort((a, b) => b.aiConfidence - a.aiConfidence).slice(0, 3)} 
-        criticalCount={criticalCount} 
+        incidents={citizenReports.slice(0, 4)}
       />
     </div>
   );

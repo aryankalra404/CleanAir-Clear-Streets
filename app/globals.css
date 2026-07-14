@@ -1230,6 +1230,28 @@ a {
   color: var(--teal-dark);
 }
 
+.ambient-refresh-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  margin-left: auto;
+  border: 1px solid #0f766e;
+  border-radius: 999px;
+  background: #0f766e;
+  padding: 7px 10px;
+  color: white;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.ambient-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 .incident-empty-state,
 .evidence-awaiting-state {
   display: grid;

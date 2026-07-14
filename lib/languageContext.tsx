@@ -47,22 +47,6 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const enRef = useRef<Record<string, string>>({});
 
-  // Load English base on mount, then restore saved language
-  useEffect(() => {
-    loadEN().then(async (en) => {
-      enRef.current = en;
-      const saved = typeof window !== "undefined"
-        ? localStorage.getItem("preferred_locale") || "en"
-        : "en";
-      if (saved !== "en") {
-        setLocaleState(saved);
-        await applyLocale(saved);
-      } else {
-        setTranslations(en);
-      }
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   const applyLocale = useCallback(async (lang: string) => {
     if (lang === "en") {
       setTranslations(enRef.current);
@@ -79,6 +63,22 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     }
   }, []);
+
+  // Load English base on mount, then restore saved language
+  useEffect(() => {
+    loadEN().then(async (en) => {
+      enRef.current = en;
+      const saved = typeof window !== "undefined"
+        ? localStorage.getItem("preferred_locale") || "en"
+        : "en";
+      if (saved !== "en") {
+        setLocaleState(saved);
+        await applyLocale(saved);
+      } else {
+        setTranslations(en);
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setLocale = useCallback((lang: string) => {
     setLocaleState(lang);

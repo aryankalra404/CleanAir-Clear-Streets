@@ -18,6 +18,7 @@ import {
   DEFAULT_H3_CELL_ID,
   promoteCellIfThresholdPassed,
 } from "@/lib/reportSubmissions";
+import { isSensorReadingFresh } from "@/lib/supportEvidence";
 
 const GEMINI_MODEL = "gemini-2.5-flash";
 const CLASSIFICATION_PROMPT = `You are an air quality sensor for a municipal pollution monitoring system in Delhi NCR. 
@@ -65,6 +66,7 @@ interface GeminiResponse {
 }
 
 interface ReportDoc {
+  createdAt?: { toDate?: () => Date } | Date | string;
   hazardId?: string;
   hazardLabel?: string;
   h3CellId?: string;
@@ -78,6 +80,27 @@ interface ReportDoc {
 }
 
 type SensorTrend = "rising" | "flat" | "falling" | "insufficient_data";
+
+function getReportCreatedAtDate(report: ReportDoc) {
+  if (report.createdAt instanceof Date && Number.isFinite(report.createdAt.getTime())) {
+    return report.createdAt;
+  }
+
+  if (typeof report.createdAt === "string") {
+    const parsed = new Date(report.createdAt);
+    if (Number.isFinite(parsed.getTime())) return parsed;
+  }
+
+  const timestampDate =
+    report.createdAt &&
+    typeof report.createdAt === "object" &&
+    "toDate" in report.createdAt
+      ? report.createdAt.toDate?.()
+      : undefined;
+  return timestampDate && Number.isFinite(timestampDate.getTime())
+    ? timestampDate
+    : new Date();
+}
 
 function getEstimatedSensorValidation(lat: number, confidence: number) {
   const lowCoverage = Number.isFinite(lat) && lat > 28.6;
@@ -262,11 +285,13 @@ async function callGeminiWithRetry(inlineData: { data: string; mimeType: string 
 
 export async function POST(request: Request) {
   let reportId = "";
+  let finalAttempt = true;
   const startedAt = Date.now();
 
   try {
-    const body = (await request.json()) as { reportId?: string };
+    const body = (await request.json()) as { finalAttempt?: boolean; reportId?: string };
     reportId = body.reportId ?? "";
+    finalAttempt = body.finalAttempt ?? true;
 
     if (!reportId) {
       return NextResponse.json({ error: "Missing reportId." }, { status: 400 });
@@ -328,15 +353,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ classification, ok: true });
     }
 
+    const reportCreatedAt = getReportCreatedAtDate(report);
     const [satelliteData, nearestStation, windData] =
       Number.isFinite(lat) && Number.isFinite(lng)
         ? await Promise.all([
-            getSatelliteDataForPoint(lat, lng),
+            getSatelliteDataForPoint(lat, lng, reportCreatedAt),
             getNearestStationReading(lat, lng),
             getWindData(lat, lng),
           ])
         : [null, null, null];
     const primaryPollutant = getPrimaryPollutant(classification.type, nearestStation);
+    const sensorFresh = nearestStation
+      ? isSensorReadingFresh(nearestStation.lastUpdated)
+      : false;
     const sensorValidation = nearestStation
       ? {
           distanceKm: nearestStation.distanceKm,
@@ -351,7 +380,7 @@ export async function POST(request: Request) {
           so2: nearestStation.so2,
           source: nearestStation.source,
           stationName: nearestStation.stationName,
-          trend: "insufficient_data" as SensorTrend,
+          trend: sensorFresh ? "rising" as SensorTrend : "insufficient_data" as SensorTrend,
         }
       : getEstimatedSensorValidation(lat, pollutionSignalConfidence);
     const satelliteChannel = satelliteData
@@ -374,7 +403,9 @@ export async function POST(request: Request) {
       corroborationScore: null, // corroboration only applies once a cell is promoted — see reportSubmissions.ts
       satelliteScore:
         satelliteData && !satelliteData.error ? satelliteWeightToScore(satelliteAnomaly) : null,
-      sensorScore: nearestStation ? sensorDeltaToScore(primaryPollutant.delta) : null,
+      sensorScore: nearestStation && sensorFresh
+        ? sensorDeltaToScore(primaryPollutant.delta)
+        : null,
       visualScore: pollutionSignalConfidence,
     });
     const finalConfidence = fusion.finalConfidence;
@@ -418,6 +449,7 @@ export async function POST(request: Request) {
         },
         promotionReason: "Gemini classified report; waiting for corroboration threshold.",
         satellite: {
+          anomalyScore: satelliteAnomaly,
           aerosolIndexAnomaly: satelliteData?.aerosolIndex.anomalyScore ?? 0,
           aerosolIndexRaw: satelliteData?.aerosolIndex.rawValue ?? null,
           fireDustSmokeWeight: satelliteData?.hazardWeights.fireDustSmoke ?? 0,
@@ -425,8 +457,14 @@ export async function POST(request: Request) {
             satelliteData?.no2.rawValue || satelliteData?.aerosolIndex.rawValue
               ? "fresh"
               : "stale",
+          hazardWeight: satelliteAnomaly,
           industrialTrafficWeight: satelliteData?.hazardWeights.industrialTraffic ?? 0,
-          lastPassTime: satelliteData?.timestamp ?? new Date().toISOString(),
+          computedAt: satelliteData?.computedAt ?? new Date().toISOString(),
+          lastPassTime: satelliteData
+            ? `window ${satelliteData.windowStart} to ${satelliteData.windowEnd}`
+            : "unavailable",
+          windowEnd: satelliteData?.windowEnd,
+          windowStart: satelliteData?.windowStart,
           no2Anomaly: satelliteData?.no2.anomalyScore ?? 0,
           rawNo2: satelliteData?.no2.rawValue ?? null,
           selectedChannel: satelliteChannel,
@@ -450,11 +488,22 @@ export async function POST(request: Request) {
     console.error("Report classification failed", error);
 
     if (reportId && isFirebaseConfigured && db) {
+      const failurePayload = finalAttempt
+        ? {
+            classificationError:
+              error instanceof Error ? error.message : "Unknown classification error.",
+            classificationFailedAt: serverTimestamp(),
+            status: "classification_failed",
+          }
+        : {
+            classificationAttemptError:
+              error instanceof Error ? error.message : "Unknown classification error.",
+            classificationAttemptFailedAt: serverTimestamp(),
+            status: "pending",
+          };
+
       await updateDoc(doc(db, "reports", reportId), {
-        classificationError:
-          error instanceof Error ? error.message : "Unknown classification error.",
-        classificationFailedAt: serverTimestamp(),
-        status: "classification_failed",
+        ...failurePayload,
       }).catch((updateError) => {
         console.error("Could not mark report classification_failed", updateError);
       });

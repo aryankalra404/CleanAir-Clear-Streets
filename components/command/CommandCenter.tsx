@@ -19,10 +19,12 @@ import {
   type FirestoreReport,
 } from "@/lib/firestoreReports";
 import { buildIncidentEvidence } from "@/lib/incidentEvidence";
+import { isInOperationalRegion } from "@/lib/operationalRegion";
 import { TIER_LABELS, priorityRank } from "@/lib/supportEvidence";
 import { latLngToCell } from "h3-js";
 
 type CommandTab = "priority" | "citizen_reported" | "auto_detected";
+const SINGLE_SOURCE_AUTO_DISPLAY_CAP = 78;
 
 const commandTabs: Array<{ id: CommandTab; label: string }> = [
   { id: "priority", label: "Priority" },
@@ -30,18 +32,95 @@ const commandTabs: Array<{ id: CommandTab; label: string }> = [
   { id: "auto_detected", label: "Automatically Detected" },
 ];
 
+function getIncidentHazardLabel(incident: Incident, t: (key: string) => string) {
+  const isAutoDetected = (incident.evidence?.citizenSignal?.reportCount ?? 0) === 0;
+
+  if (isAutoDetected) {
+    if (incident.hazardType === "dust") return "Likely dust / PM10 spike";
+    if (incident.hazardType === "industrial") return "Likely industrial emission";
+    if (incident.hazardType === "particulate") return "Fine particulate spike";
+    if (incident.hazardType === "smog") return "Likely smog trap";
+    if (incident.hazardType === "fire") return "Possible burning hotspot";
+  }
+
+  return t("hazard_" + incident.hazardType);
+}
+
+function shouldShowInCommandCenter(incident: Incident) {
+  return (
+    incident.status !== "resolved" &&
+    isInOperationalRegion(incident.latitude, incident.longitude)
+  );
+}
+
+function getCitizenReportCount(incident: Incident) {
+  return incident.evidence?.citizenSignal?.reportCount ?? 0;
+}
+
+function getAutoAbnormalnessScore(incident: Incident) {
+  const maxTriggerDelta = Math.max(
+    0,
+    ...(incident.triggerPollutants ?? []).map((pollutant) => pollutant.deltaPct),
+  );
+  return Math.max(incident.aiConfidence, maxTriggerDelta);
+}
+
+function compareAutoDetected(a: Incident, b: Incident) {
+  const rankA = priorityRank(a.evidence?.tier, 0);
+  const rankB = priorityRank(b.evidence?.tier, 0);
+  if (rankA !== rankB) return rankA - rankB;
+
+  const abnormalityDelta = getAutoAbnormalnessScore(b) - getAutoAbnormalnessScore(a);
+  if (abnormalityDelta !== 0) return abnormalityDelta;
+
+  return b.aiConfidence - a.aiConfidence;
+}
+
+function compareCitizenBacked(a: Incident, b: Incident) {
+  const reportsA = getCitizenReportCount(a);
+  const reportsB = getCitizenReportCount(b);
+  if (reportsB !== reportsA) return reportsB - reportsA;
+
+  const rankA = priorityRank(a.evidence?.tier, reportsA);
+  const rankB = priorityRank(b.evidence?.tier, reportsB);
+  if (rankA !== rankB) return rankA - rankB;
+
+  return b.aiConfidence - a.aiConfidence;
+}
+
 export default function CommandCenter() {
   const t = useT();
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
   const [liveAlertIncidents, setLiveAlertIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<CommandTab>("priority");
+  const [ambientScanState, setAmbientScanState] = useState<"idle" | "scanning">("idle");
   const [toastMessage, setToastMessage] = useState("");
   const [liveDataError, setLiveDataError] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(""), 3000);
+  };
+
+  const runAmbientScan = async (force = false, notify = force) => {
+    if (!isFirebaseConfigured || ambientScanState === "scanning") return;
+    setAmbientScanState("scanning");
+    try {
+      const response = await fetch(`/api/scan-ambient${force ? "?force=1" : ""}`);
+      if (!response.ok) throw new Error(`scan-ambient responded ${response.status}`);
+      const result = await response.json() as { promoted?: unknown[]; scanned?: number };
+      if (notify) {
+        showToast(
+          `Auto scan complete: ${result.promoted?.length ?? 0} active from ${result.scanned ?? 0} checks`,
+        );
+      }
+    } catch (error) {
+      console.error("Ambient scan failed:", error);
+      if (notify) showToast("Auto scan failed");
+    } finally {
+      setAmbientScanState("idle");
+    }
   };
 
   useEffect(() => {
@@ -65,7 +144,7 @@ export default function CommandCenter() {
             }))
             .filter((report) => hasPollutionSignal(report.data))
             .map((report) => reportToIncident(report.id, report.data))
-            .filter((incident) => incident.status !== "resolved"),
+            .filter(shouldShowInCommandCenter),
         );
       },
       (error) => {
@@ -84,7 +163,7 @@ export default function CommandCenter() {
     const incidentsQuery = query(
       collection(db, "incidents"),
       orderBy("updatedAt", "desc"),
-      limit(50),
+      limit(200),
     );
 
     return onSnapshot(
@@ -94,7 +173,7 @@ export default function CommandCenter() {
         setLiveAlertIncidents(
           snapshot.docs
             .map((doc) => reportToIncident(doc.id, doc.data() as FirestoreReport))
-            .filter((incident) => incident.status !== "resolved"),
+            .filter(shouldShowInCommandCenter),
         );
       },
       (error) => {
@@ -110,9 +189,10 @@ export default function CommandCenter() {
   // itself has a 5-min in-process cooldown, so this is safe to call on mount.
   useEffect(() => {
     if (!isFirebaseConfigured) return;
-    fetch("/api/scan-ambient").catch(() => {
-      // Non-fatal — ambient detections just won't appear until the next scan succeeds.
-    });
+    const timeoutId = window.setTimeout(() => {
+      void runAmbientScan(false);
+    }, 1000);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   const incomingSignals = useMemo(
@@ -133,16 +213,15 @@ export default function CommandCenter() {
   // Ties within the same rank fall back to report count (more first), then
   // most-recently-updated first.
   const priorityIncidents = useMemo(
-    () =>
-      [...liveAlertIncidents].sort((a, b) => {
-        const reportsA = a.evidence?.citizenSignal?.reportCount ?? 0;
-        const reportsB = b.evidence?.citizenSignal?.reportCount ?? 0;
-        const rankA = priorityRank(a.evidence?.tier, reportsA);
-        const rankB = priorityRank(b.evidence?.tier, reportsB);
-        if (rankA !== rankB) return rankA - rankB;
-        if (reportsB !== reportsA) return reportsB - reportsA;
-        return 0;
-      }),
+    () => {
+      const citizenBacked = liveAlertIncidents
+        .filter((incident) => getCitizenReportCount(incident) > 0)
+        .sort(compareCitizenBacked);
+      const autoDetected = liveAlertIncidents
+        .filter((incident) => getCitizenReportCount(incident) === 0)
+        .sort(compareAutoDetected);
+      return [...citizenBacked, ...autoDetected];
+    },
     [liveAlertIncidents],
   );
 
@@ -164,9 +243,9 @@ export default function CommandCenter() {
   // and shouldn't be mixed into the citizen-corroborated channel.
   const autoDetectedIncidents = useMemo(
     () =>
-      liveAlertIncidents.filter(
-        (incident) => (incident.evidence?.citizenSignal?.reportCount ?? 0) === 0,
-      ),
+      liveAlertIncidents
+        .filter((incident) => getCitizenReportCount(incident) === 0)
+        .sort(compareAutoDetected),
     [liveAlertIncidents],
   );
 
@@ -278,6 +357,17 @@ export default function CommandCenter() {
                (t("source_filter_auto_detected") || tab.label)}
             </button>
           ))}
+          {activeTab === "auto_detected" && (
+            <button
+              className="ambient-refresh-button"
+              disabled={ambientScanState === "scanning"}
+              onClick={() => void runAmbientScan(true)}
+              title="Refresh automatic sensor and satellite scan"
+              type="button"
+            >
+              {ambientScanState === "scanning" ? "Scanning" : "Reload"}
+            </button>
+          )}
         </div>
 
         <div className="incident-queue-list">
@@ -305,7 +395,7 @@ export default function CommandCenter() {
                   {incident.neighborhood}
                 </strong>
                 <small>
-                  {t("hazard_" + incident.hazardType)}
+                  {getIncidentHazardLabel(incident, t)}
                   {incident.evidence?.tier
                     ? ` · ${t("tier_" + incident.evidence.tier) || TIER_LABELS[incident.evidence.tier]}`
                     : ` · ${incident.source === "citizen" ? t("source_filter_citizen") : incident.source === "sensor" ? t("source_filter_sensor") : t("source_filter_satellite")}`}
@@ -473,6 +563,18 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
   const evidence = incident.evidence ?? null;
   const isAwaitingClassification = !evidence;
   const fallbackEvidence = evidence ?? buildIncidentEvidence(incident);
+  const isAutoDetected = fallbackEvidence.citizenSignal.reportCount === 0;
+  const physicalSourceCount =
+    (fallbackEvidence.fusion.sensorWeight > 0 ? 1 : 0) +
+    (fallbackEvidence.fusion.satelliteWeight > 0 ? 1 : 0);
+  const hasOnlyOneAutoSource =
+    isAutoDetected &&
+    physicalSourceCount === 1 &&
+    fallbackEvidence.fusion.visualWeight === 0 &&
+    (fallbackEvidence.fusion.corroborationWeight ?? 0) === 0;
+  const displayedFusionConfidence = hasOnlyOneAutoSource
+    ? Math.min(fallbackEvidence.fusion.finalConfidence, SINGLE_SOURCE_AUTO_DISPLAY_CAP)
+    : fallbackEvidence.fusion.finalConfidence;
   const sensorLabel =
     fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.stationName
       ? `${fallbackEvidence.sensor.stationName} · ${fallbackEvidence.sensor.distanceKm?.toFixed(1)} km`
@@ -489,6 +591,9 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
     fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.lastUpdated
       ? `updated ${fallbackEvidence.sensor.lastUpdated}`
       : fallbackEvidence.sensor.trend;
+  const satelliteMeta = fallbackEvidence.satellite.windowStart && fallbackEvidence.satellite.windowEnd
+    ? `${fallbackEvidence.satellite.freshness} · ${fallbackEvidence.satellite.windowStart} to ${fallbackEvidence.satellite.windowEnd}`
+    : `${fallbackEvidence.satellite.freshness} · ${fallbackEvidence.satellite.lastPassTime}`;
 
   return (
     <aside className="incident-detail-panel">
@@ -517,7 +622,7 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
       </div>
 
       <div className="ai-analysis-card">
-        <p>{t("command_detail_evidence_ai")}</p>
+        <p>{isAutoDetected ? "Evidence fusion" : t("command_detail_evidence_ai")}</p>
         {isAwaitingClassification ? (
           <>
             <h3>{t("command_detail_status_awaiting_class")}</h3>
@@ -529,10 +634,10 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
         ) : (
           <>
             <h3>
-              {fallbackEvidence.fusion.finalConfidence}% fusion confidence
+              {displayedFusionConfidence}% fusion confidence
             </h3>
             <div className="analysis-meter">
-              <span style={{ width: `${fallbackEvidence.fusion.finalConfidence}%` }} />
+              <span style={{ width: `${displayedFusionConfidence}%` }} />
             </div>
             <small>
               {[
@@ -590,7 +695,7 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
               <li>
                 <span>{t("command_detail_evidence_satellite")}</span>
                 <strong>
-                  {fallbackEvidence.satellite.freshness} · {fallbackEvidence.satellite.lastPassTime}
+                  {satelliteMeta}
                 </strong>
               </li>
             </ul>

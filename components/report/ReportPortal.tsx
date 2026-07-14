@@ -197,7 +197,7 @@ export default function ReportPortal() {
       if (report.status === "classification_failed") {
         setClassificationFeedback({
           message:
-            "Report saved, but Gemini could not classify this photo. It stays hidden until reviewed or retried.",
+            "Report saved, but automatic photo analysis failed. It stays hidden until reviewed or retried.",
           tone: "error",
         });
         return;

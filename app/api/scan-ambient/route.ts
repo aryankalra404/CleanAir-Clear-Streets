@@ -6,13 +6,14 @@ export const runtime = "nodejs";
 // In-process cooldown — Earth Engine responses are already cached 3h per
 // cell, but this avoids kicking off a redundant scan on every Command
 // Center mount within the same server instance.
-const COOLDOWN_MS = 5 * 60 * 1000;
+const COOLDOWN_MS = 60 * 1000;
 let lastRunAt = 0;
 let lastResult: Awaited<ReturnType<typeof scanAmbientHotspots>> | null = null;
 
-export async function GET() {
+export async function GET(request: Request) {
   const now = Date.now();
-  if (lastResult && now - lastRunAt < COOLDOWN_MS) {
+  const force = new URL(request.url).searchParams.get("force") === "1";
+  if (!force && lastResult && lastResult.promoted.length > 0 && now - lastRunAt < COOLDOWN_MS) {
     return NextResponse.json({ ...lastResult, cached: true });
   }
 

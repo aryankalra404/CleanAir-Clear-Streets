@@ -6,8 +6,10 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
+import type { DocumentReference, Timestamp } from "firebase/firestore";
 import { latLngToCell } from "h3-js";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { resolveIncidentHazardType } from "@/lib/firestoreReports";
@@ -42,6 +44,7 @@ export interface ReportSubmissionInput {
 
 interface StoredReport {
   aiConfidence?: number;
+  createdAt?: Timestamp;
   geminiClassification?: {
     confidence?: number;
     severity?: number | string;
@@ -62,6 +65,13 @@ interface StoredReport {
 const H3_RESOLUTION = 8;
 export const DEFAULT_H3_CELL_ID = "883da114bbfffff";
 const POLLUTION_TYPES = new Set(["dust", "fire", "haze", "smoke"]);
+const HAZARD_PROMOTION_WINDOW_HOURS: Record<HazardType, number> = {
+  dust: 7 * 24,
+  fire: 7 * 24,
+  industrial: 7 * 24,
+  particulate: 3 * 24,
+  smog: 3 * 24,
+};
 
 export function getHazardType(hazardId: string) {
   if (hazardId.includes("dust")) return "dust";
@@ -97,6 +107,16 @@ function getPollutionSignalConfidence(report: StoredReport) {
 
   const confidence = classification.confidence ?? report.aiConfidence ?? 0;
   return confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence);
+}
+
+function getPromotionWindowHours(hazardType: HazardType) {
+  return HAZARD_PROMOTION_WINDOW_HOURS[hazardType];
+}
+
+function isWithinPromotionWindow(report: StoredReport, nowMs: number, windowHours: number) {
+  const createdAtMs = report.createdAt?.toDate().getTime();
+  if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs)) return false;
+  return nowMs - createdAtMs <= windowHours * 60 * 60 * 1000;
 }
 
 export async function promoteCellIfThresholdPassed(h3CellId: string) {
@@ -146,169 +166,203 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       reportsByHazard[hazard].push(r);
     }
 
-    for (const [hazardType, hazardReports] of Object.entries(reportsByHazard)) {
-    // Sort to make the highest confidence report primary
-    hazardReports.sort((a, b) => getPollutionSignalConfidence(b.data) - getPollutionSignalConfidence(a.data));
-    const primaryReport = hazardReports[0].data;
+    const nowMs = Date.now();
+    const promotionCandidates: Array<{
+      hazardReports: typeof allReports;
+      incidentPayload: Record<string, unknown>;
+      incidentRef: DocumentReference;
+      promotedValidation: IncidentEvidence;
+    }> = [];
 
-    // Support can come from ANY report in the cluster, not just the primary one —
-    // one citizen's report might not have a nearby station, but another's might.
-    const sensorSupported = hazardReports.some((r) =>
-      checkStoredSensorSupport(hazardType as HazardType, r.data.validation?.sensor),
-    );
-    const satelliteSupported = hazardReports.some((r) =>
-      checkStoredSatelliteSupport(r.data.validation?.satellite),
-    );
+    for (const [hazardTypeKey, unfilteredHazardReports] of Object.entries(reportsByHazard)) {
+      const hazardType = hazardTypeKey as HazardType;
+      const windowHours = getPromotionWindowHours(hazardType);
+      const windowMinutes = windowHours * 60;
+      const hazardReports = unfilteredHazardReports.filter((report) =>
+        isWithinPromotionWindow(report.data, nowMs, windowHours),
+      );
+      if (hazardReports.length === 0) continue;
 
-    const tier = determineTier({
-      reportCount: hazardReports.length,
-      sensorSupported,
-      satelliteSupported,
-    });
+      // Sort to make the highest confidence report primary.
+      hazardReports.sort(
+        (a, b) => getPollutionSignalConfidence(b.data) - getPollutionSignalConfidence(a.data),
+      );
+      const primaryReport = hazardReports[0].data;
 
-    // Not enough evidence yet on any promotion path — leave as citizen-only signal.
-    if (!tier) continue;
+      // Support can come from ANY report in the cluster, not just the primary one —
+      // one citizen's report might not have a nearby station, but another's might.
+      const sensorSupported = hazardReports.some((r) =>
+        checkStoredSensorSupport(hazardType, r.data.validation?.sensor),
+      );
+      const satelliteSupported = hazardReports.some((r) =>
+        checkStoredSatelliteSupport(r.data.validation?.satellite),
+      );
 
-    const avgConfidence = Math.round(
-      hazardReports.reduce(
-        (sum, report) => sum + getPollutionSignalConfidence(report.data),
-        0,
-      ) / hazardReports.length,
-    );
-    const reportWithPhoto = hazardReports.find((r) => !!r.data.photoUrl);
-    const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
-    const promotionReason = tierPromotionReason(tier, hazardReports.length);
-
-    // Pull the strongest *real* sensor/satellite reading from anywhere in
-    // the cluster — same "any report, not just primary" reasoning as the
-    // support checks above — so the fusion score isn't blind to evidence
-    // that happened to land on a non-primary report.
-    const bestSensorDelta = hazardReports.reduce((max, r) => {
-      const sensor = r.data.validation?.sensor;
-      if (!sensor || sensor.distanceKm == null) return max;
-      const delta = sensor.primaryDelta ?? sensor.pm25Delta ?? 0;
-      return delta > max ? delta : max;
-    }, -Infinity);
-    const bestSatelliteWeight = hazardReports.reduce((max, r) => {
-      const satellite = r.data.validation?.satellite;
-      if (!satellite) return max;
-      const weight = satellite.hazardWeight ?? satellite.anomalyScore ?? 0;
-      return weight > max ? weight : max;
-    }, -Infinity);
-
-    const fusion = computeFusionConfidence({
-      corroborationScore: corroborationCountToScore(hazardReports.length),
-      satelliteScore: bestSatelliteWeight === -Infinity ? null : satelliteWeightToScore(bestSatelliteWeight),
-      sensorScore: bestSensorDelta === -Infinity ? null : sensorDeltaToScore(bestSensorDelta),
-      visualScore: avgConfidence,
-    });
-
-    const baseValidation = primaryReport.validation;
-    const promotedValidation = baseValidation ? {
-      ...baseValidation,
-      alertReason: "Citizen-corroborated hotspot promoted from public signals to municipal review.",
-      alertTier: true,
-      tier,
-      citizenSignal: {
-        ...baseValidation.citizenSignal,
-        averageConfidence: avgConfidence,
+      const tier = determineTier({
         reportCount: hazardReports.length,
-        windowMinutes: 20,
-      },
-      fusion: {
-        ...baseValidation.fusion,
-        finalConfidence: fusion.finalConfidence,
-        satelliteWeight: fusion.satelliteWeight,
-        sensorWeight: fusion.sensorWeight,
-        visualWeight: fusion.visualWeight,
-        corroborationWeight: fusion.corroborationWeight,
-      },
-      promotionReason,
-    } : {
-      alertReason:
-        "Citizen-corroborated hotspot promoted from public signals to municipal review.",
-      alertTier: true,
-      tier,
-      citizenSignal: {
-        averageConfidence: avgConfidence,
-        reportCount: hazardReports.length,
-        windowMinutes: 20,
-      },
-      coverage: {
-        label: "Low station coverage",
-        level: "low",
-        nearestSensorKm: 3.2,
-      },
-      fusion: {
-        coverageAdjusted: true,
-        finalConfidence: fusion.finalConfidence,
+        sensorSupported,
+        satelliteSupported,
+      });
+
+      // Not enough evidence yet on any promotion path — leave as citizen-only signal.
+      if (!tier) continue;
+
+      const avgConfidence = Math.round(
+        hazardReports.reduce(
+          (sum, report) => sum + getPollutionSignalConfidence(report.data),
+          0,
+        ) / hazardReports.length,
+      );
+      const reportWithPhoto = hazardReports.find((r) => !!r.data.photoUrl);
+      const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
+      const promotionReason = tierPromotionReason(tier, hazardReports.length);
+
+      // Pull the strongest *real* sensor/satellite reading from anywhere in
+      // the cluster — same "any report, not just primary" reasoning as the
+      // support checks above — so the fusion score isn't blind to evidence
+      // that happened to land on a non-primary report.
+      const bestSensorDelta = hazardReports.reduce((max, r) => {
+        const sensor = r.data.validation?.sensor;
+        if (!checkStoredSensorSupport(hazardType, sensor)) return max;
+        if (!sensor || sensor.distanceKm == null) return max;
+        const delta = sensor.primaryDelta ?? sensor.pm25Delta ?? 0;
+        return delta > max ? delta : max;
+      }, -Infinity);
+      const bestSatelliteWeight = hazardReports.reduce((max, r) => {
+        const satellite = r.data.validation?.satellite;
+        if (!checkStoredSatelliteSupport(satellite)) return max;
+        if (!satellite) return max;
+        const weight =
+          satellite.hazardWeight ??
+          satellite.anomalyScore ??
+          Math.max(
+            satellite.fireDustSmokeWeight ?? 0,
+            satellite.industrialTrafficWeight ?? 0,
+          );
+        return weight > max ? weight : max;
+      }, -Infinity);
+
+      const fusion = computeFusionConfidence({
+        corroborationScore: corroborationCountToScore(hazardReports.length),
+        satelliteScore: bestSatelliteWeight === -Infinity ? null : satelliteWeightToScore(bestSatelliteWeight),
+        sensorScore: bestSensorDelta === -Infinity ? null : sensorDeltaToScore(bestSensorDelta),
+        visualScore: avgConfidence,
+      });
+
+      const baseValidation = primaryReport.validation;
+      const promotedValidation: IncidentEvidence = baseValidation ? {
+        ...baseValidation,
+        alertReason: "Citizen-corroborated hotspot promoted from public signals to municipal review.",
+        alertTier: true,
+        tier,
+        citizenSignal: {
+          ...baseValidation.citizenSignal,
+          averageConfidence: avgConfidence,
+          reportCount: hazardReports.length,
+          windowMinutes,
+        },
+        fusion: {
+          ...baseValidation.fusion,
+          finalConfidence: fusion.finalConfidence,
+          satelliteWeight: fusion.satelliteWeight,
+          sensorWeight: fusion.sensorWeight,
+          visualWeight: fusion.visualWeight,
+          corroborationWeight: fusion.corroborationWeight,
+        },
+        promotionReason,
+      } : {
+        alertReason:
+          "Citizen-corroborated hotspot promoted from public signals to municipal review.",
+        alertTier: true,
+        tier,
+        citizenSignal: {
+          averageConfidence: avgConfidence,
+          reportCount: hazardReports.length,
+          windowMinutes,
+        },
+        coverage: {
+          label: "Low station coverage",
+          level: "low",
+          nearestSensorKm: 3.2,
+        },
+        fusion: {
+          coverageAdjusted: true,
+          finalConfidence: fusion.finalConfidence,
+          h3CellId,
+          satelliteWeight: fusion.satelliteWeight,
+          sensorWeight: fusion.sensorWeight,
+          visualWeight: fusion.visualWeight,
+          corroborationWeight: fusion.corroborationWeight,
+        },
+        promotionReason,
+        satellite: {
+          freshness: "stale" as const,
+          lastPassTime: "Satellite window unavailable",
+          signal: "Last Sentinel-5P pass not decisive; alert driven by citizen cluster.",
+          source: "Earth Engine" as const,
+        },
+        sensor: {
+          pm25Delta: 8,
+          source: "estimated" as const,
+          trend: "rising" as const,
+        },
+      };
+
+      const incidentRef = doc(db!, "incidents", `${h3CellId}-${hazardType}`);
+      const incidentPayload: Record<string, unknown> = {
+        aiConfidence: avgConfidence,
+        geminiClassification: {
+          confidence: avgConfidence,
+          description: `${hazardType} hotspot — ${tierPromotionReason(tier, hazardReports.length)}`,
+          severity: getSeverity(avgConfidence),
+          type: primaryReport.geminiClassification?.type ?? hazardType,
+        },
         h3CellId,
-        satelliteWeight: fusion.satelliteWeight,
-        sensorWeight: fusion.sensorWeight,
-        visualWeight: fusion.visualWeight,
-        corroborationWeight: fusion.corroborationWeight,
-      },
-      promotionReason,
-      satellite: {
-        freshness: "stale" as const,
-        lastPassTime: "Yesterday 10:18",
-        signal: "Last Sentinel-5P pass not decisive; alert driven by citizen cluster.",
-        source: "Earth Engine" as const,
-      },
-      sensor: {
-        pm25Delta: 8,
-        source: "estimated" as const,
-        trend: "rising" as const,
-      },
-    };
-
-    // Read the existing incident doc *before* any writes in this
-    // transaction — Firestore transactions require all reads to happen
-    // before any writes, or the whole transaction throws. This used to run
-    // after the report-status update loop below, which meant every
-    // promotion attempt was silently failing: the throw happened after the
-    // report's own "classified" update had already committed (a separate,
-    // non-transactional updateDoc earlier in classify-report/route.ts), so
-    // geminiClassification stayed intact and the report kept showing up
-    // fine in the UI — it just never actually got promoted.
-    const incidentRef = doc(db!, "incidents", `${h3CellId}-${hazardType}`);
-    const existingIncidentSnap = await transaction.get(incidentRef);
-
-    for (const report of hazardReports) {
-      transaction.update(report.ref, {
+        hazardLabel: primaryReport.hazardLabel ?? `Citizen ${hazardType} cluster`,
+        linkedReportIds: hazardReports.map((report) => report.id),
+        location: primaryReport.location ?? {
+          label: "Citizen report cluster",
+          lat: "28.6264",
+          lng: "77.3192",
+        },
+        photoUrl: bestPhotoUrl,
+        source: "citizen_cluster",
         status: "under_review",
+        updatedAt: serverTimestamp(),
         validation: promotedValidation,
+      };
+
+      promotionCandidates.push({
+        hazardReports,
+        incidentPayload,
+        incidentRef,
+        promotedValidation,
       });
     }
 
-    const incidentPayload: Record<string, unknown> = {
-      aiConfidence: avgConfidence,
-      geminiClassification: {
-        confidence: avgConfidence,
-        description: `${hazardType} hotspot — ${tierPromotionReason(tier, hazardReports.length)}`,
-        severity: getSeverity(avgConfidence),
-        type: primaryReport.geminiClassification?.type ?? hazardType,
-      },
-      h3CellId,
-      hazardLabel: primaryReport.hazardLabel ?? `Citizen ${hazardType} cluster`,
-      linkedReportIds: hazardReports.map((report) => report.id),
-      location: primaryReport.location ?? {
-        label: "Citizen report cluster",
-        lat: "28.6264",
-        lng: "77.3192",
-      },
-      photoUrl: bestPhotoUrl,
-      source: "citizen_cluster",
-      status: "under_review",
-      updatedAt: serverTimestamp(),
-      validation: promotedValidation,
-    };
-    if (!existingIncidentSnap.exists()) {
-      // First time this cell+hazard is being promoted — stamp the creation time.
-      incidentPayload.createdAt = serverTimestamp();
-    }
-    transaction.set(incidentRef, incidentPayload, { merge: true });
-    }
+    // Firestore requires every transaction read to happen before any write.
+    // Hoist incident reads out of the per-hazard write loop so multi-hazard
+    // promotions in the same cell do not read after the first hazard writes.
+    const existingIncidentSnaps = await Promise.all(
+      promotionCandidates.map((candidate) => transaction.get(candidate.incidentRef)),
+    );
+
+    promotionCandidates.forEach((candidate, index) => {
+      for (const report of candidate.hazardReports) {
+        transaction.update(report.ref, {
+          status: "under_review",
+          validation: candidate.promotedValidation,
+        });
+      }
+
+      const incidentPayload = { ...candidate.incidentPayload };
+      const existingIncidentSnap = existingIncidentSnaps[index];
+      if (!existingIncidentSnap.exists()) {
+        // First time this cell+hazard is being promoted — stamp the creation time.
+        incidentPayload.createdAt = serverTimestamp();
+      }
+      transaction.set(candidate.incidentRef, incidentPayload, { merge: true });
+    });
   });
 }
 
@@ -354,7 +408,7 @@ export async function submitCitizenReport(report: ReportSubmissionInput) {
       promotionReason: "Waiting for Gemini classification before corroboration checks.",
       satellite: {
         freshness: "stale",
-        lastPassTime: "Yesterday 10:18",
+        lastPassTime: "Satellite context pending.",
         signal: "Satellite context pending.",
         source: "Earth Engine",
       },
@@ -387,7 +441,7 @@ async function classifyReportWithRetry(reportId: string, attempt = 1): Promise<v
   const MAX_ATTEMPTS = 3;
   try {
     const res = await fetch("/api/classify-report", {
-      body: JSON.stringify({ reportId }),
+      body: JSON.stringify({ finalAttempt: attempt >= MAX_ATTEMPTS, reportId }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
     });
@@ -399,6 +453,15 @@ async function classifyReportWithRetry(reportId: string, attempt = 1): Promise<v
           `this report will never count toward the promotion threshold until retried manually.`,
         err,
       );
+      if (db) {
+        await updateDoc(doc(db, "reports", reportId), {
+          classificationAttemptError: err instanceof Error ? err.message : String(err),
+          classificationAttemptFailedAt: serverTimestamp(),
+          status: "classification_failed",
+        }).catch((updateError) => {
+          console.error("Could not mark report classification_failed", updateError);
+        });
+      }
       return;
     }
     const backoffMs = 1000 * attempt;

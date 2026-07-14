@@ -1,6 +1,4 @@
 import type { HazardType, IncidentEvidence, PromotionTier } from "@/lib/types";
-import type { NearbyStationReading } from "@/lib/cpcbSensor";
-import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
 
 /**
  * Thresholds for treating sensor/satellite readings as genuine *support* for
@@ -14,6 +12,7 @@ export const SENSOR_PROXIMITY_KM = 1.5; // stations beyond this aren't hyper-loc
 export const SENSOR_SUPPORT_DELTA_PCT = 50; // % above WHO reference for the hazard-relevant pollutant
 export const SATELLITE_SUPPORT_SCORE = 0.5; // 0-1 anomaly score (see earthEngineSatellite.ts)
 export const CITIZEN_PROMOTION_THRESHOLD = 3;
+export const SENSOR_READING_MAX_AGE_HOURS = 24;
 
 // Dust/construction events skew heavily toward coarse particulate (PM10 well
 // above PM2.5), while combustion/traffic/general haze skews toward fine
@@ -39,6 +38,49 @@ export function isDustDominant(
   return pm10 / pm25 >= DUST_PM_RATIO_THRESHOLD;
 }
 
+export function parseSensorTimestamp(value: string | null | undefined): number | null {
+  if (!value) return null;
+
+  const localDateTimeMatch = value.match(
+    /^(\d{1,4})[-/](\d{1,2})[-/](\d{1,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
+  );
+  if (localDateTimeMatch) {
+    const [, first, second, third, hour = "0", minute = "0", secondPart = "0"] =
+      localDateTimeMatch;
+    const firstNumber = Number(first);
+    const thirdNumber = Number(third);
+    const day = first.length === 4 ? thirdNumber : firstNumber;
+    const month = Number(second);
+    const year = first.length === 4 ? firstNumber : thirdNumber;
+    const utcMs =
+      Date.UTC(
+        year,
+        month - 1,
+        day,
+        Number(hour),
+        Number(minute),
+        Number(secondPart),
+      ) -
+      5.5 * 60 * 60 * 1000;
+
+    return Number.isFinite(utcMs) ? utcMs : null;
+  }
+
+  const direct = Date.parse(value);
+  if (Number.isFinite(direct)) return direct;
+  return null;
+}
+
+export function isSensorReadingFresh(
+  lastUpdated: string | null | undefined,
+  nowMs = Date.now(),
+) {
+  const updatedAtMs = parseSensorTimestamp(lastUpdated);
+  if (updatedAtMs === null) return false;
+  if (updatedAtMs > nowMs + 5 * 60 * 1000) return false;
+  return nowMs - updatedAtMs <= SENSOR_READING_MAX_AGE_HOURS * 60 * 60 * 1000;
+}
+
 
 
 /**
@@ -51,6 +93,7 @@ export function checkStoredSensorSupport(
   sensor: IncidentEvidence["sensor"] | null | undefined,
 ): boolean {
   if (!sensor) return false;
+  if (sensor.source === "CPCB" && !isSensorReadingFresh(sensor.lastUpdated)) return false;
   const distanceKm = sensor.distanceKm ?? null;
   if (distanceKm === null || distanceKm > SENSOR_PROXIMITY_KM) return false;
   const delta = sensor.primaryDelta ?? sensor.pm25Delta ?? 0;
@@ -63,7 +106,13 @@ export function checkStoredSatelliteSupport(
   satellite: IncidentEvidence["satellite"] | null | undefined,
 ): boolean {
   if (!satellite) return false;
-  const weight = satellite.hazardWeight ?? satellite.anomalyScore ?? 0;
+  const weight =
+    satellite.hazardWeight ??
+    satellite.anomalyScore ??
+    Math.max(
+      satellite.fireDustSmokeWeight ?? 0,
+      satellite.industrialTrafficWeight ?? 0,
+    );
   return weight >= SATELLITE_SUPPORT_SCORE;
 }
 

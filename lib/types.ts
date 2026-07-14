@@ -62,9 +62,12 @@ export interface IncidentEvidence {
   };
   promotionReason: string;
   satellite: {
-    source: "Earth Engine";
+    source: "Earth Engine" | "Earth Engine / Sentinel-5P";
     signal: string;
+    computedAt?: string;
     lastPassTime: string;
+    windowStart?: string;
+    windowEnd?: string;
     freshness: "fresh" | "stale";
     // 0-1 anomaly score for the hazard-relevant Sentinel-5P band
     // (aerosol index for dust/particulate, NO2 for industrial/smog). Used to
@@ -72,6 +75,13 @@ export interface IncidentEvidence {
     // context.
     anomalyScore?: number;
     hazardWeight?: number;
+    aerosolIndexAnomaly?: number;
+    aerosolIndexRaw?: number | null;
+    fireDustSmokeWeight?: number;
+    industrialTrafficWeight?: number;
+    no2Anomaly?: number;
+    rawNo2?: number | null;
+    selectedChannel?: "balanced" | "fireDustSmoke" | "industrialTraffic";
   };
   sensor: {
     pm25Delta: number;
@@ -115,9 +125,15 @@ export interface Incident {
   // Ambient-scan-only fields — set when source is sensor/satellite and no
   // citizen report exists. Lists every hazard category whose sensor/satellite
   // threshold was crossed (e.g. ["dust","industrial"]) so the map can show
-  // "Possible sources" rather than picking one label. elevatedPollutants carries
-  // the raw µg/m³ values that triggered the alert.
+  // "Possible sources" rather than picking one label. triggerPollutants lists
+  // the sensor pollutant(s) that actually crossed the event threshold; elevatedPollutants
+  // is retained as raw observed sensor context and legacy popup fallback.
   possibleSources?: string[];
+  triggerPollutants?: Array<{
+    deltaPct: number;
+    name: string;
+    value: number | null;
+  }>;
   elevatedPollutants?: {
     pm25?: number | null;
     pm10?: number | null;

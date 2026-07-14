@@ -93,6 +93,8 @@ export type GoogleMapsWindow = typeof window & {
   _cleanAirConsolePatched?: boolean;
 };
 
+const GOOGLE_MAPS_LOAD_TIMEOUT_MS = 12_000;
+
 export function getGoogleMapsWindow(): GoogleMapsWindow {
   const win = window as GoogleMapsWindow;
   if (!win._cleanAirConsolePatched) {
@@ -130,8 +132,24 @@ export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {
 
   mapsWindow.cleanAirGoogleMapsPromises[promiseKey] = new Promise((resolve, reject) => {
     const callbackName = `initMap_${promiseKey}_${Math.round(Math.random() * 1000000)}`;
-    (mapsWindow as any)[callbackName] = () => {
+    let settled = false;
+    let timeoutId: number | undefined;
+    const cleanup = () => {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       delete (mapsWindow as any)[callbackName];
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      delete mapsWindow.cleanAirGoogleMapsPromises?.[promiseKey];
+      reject(error);
+    };
+
+    (mapsWindow as any)[callbackName] = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve();
     };
 
@@ -146,7 +164,10 @@ export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {
     script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
     script.async = true;
     script.defer = true;
-    script.onerror = () => reject(new Error("Google Maps failed to load."));
+    script.onerror = () => fail(new Error("Google Maps failed to load."));
+    timeoutId = window.setTimeout(() => {
+      fail(new Error("Google Maps timed out while loading."));
+    }, GOOGLE_MAPS_LOAD_TIMEOUT_MS);
     document.head.appendChild(script);
   });
 
