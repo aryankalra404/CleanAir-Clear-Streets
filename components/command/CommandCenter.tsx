@@ -10,6 +10,7 @@ import {
   formatStatus,
   getIncidentAge,
   getRecommendedAction,
+  getRecommendedActionKey,
 } from "@/components/command/commandData";
 import GoogleHotspotMap from "@/components/map/GoogleHotspotMap";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
@@ -36,11 +37,11 @@ function getIncidentHazardLabel(incident: Incident, t: (key: string) => string) 
   const isAutoDetected = (incident.evidence?.citizenSignal?.reportCount ?? 0) === 0;
 
   if (isAutoDetected) {
-    if (incident.hazardType === "dust") return "Likely dust / PM10 spike";
-    if (incident.hazardType === "industrial") return "Likely industrial emission";
-    if (incident.hazardType === "particulate") return "Fine particulate spike";
-    if (incident.hazardType === "smog") return "Likely smog trap";
-    if (incident.hazardType === "fire") return "Possible burning hotspot";
+    if (incident.hazardType === "dust") return t("hazard_auto_dust");
+    if (incident.hazardType === "industrial") return t("hazard_auto_industrial");
+    if (incident.hazardType === "particulate") return t("hazard_auto_particulate");
+    if (incident.hazardType === "smog") return t("hazard_auto_smog");
+    if (incident.hazardType === "fire") return t("hazard_auto_fire");
   }
 
   return t("hazard_" + incident.hazardType);
@@ -88,6 +89,34 @@ function compareCitizenBacked(a: Incident, b: Incident) {
   return b.aiConfidence - a.aiConfidence;
 }
 
+function translateFreshness(freshness: string, t: (key: string) => string) {
+  const normalized = freshness.toLowerCase();
+  if (normalized === "fresh") return t("freshness_fresh");
+  if (normalized === "stale") return t("freshness_stale");
+  return freshness;
+}
+
+function getCoverageLabel(
+  coverage: { level: string; nearestSensorKm: number; label: string },
+  t: (key: string) => string,
+) {
+  if (coverage.nearestSensorKm <= 0.05) {
+    return t("coverage_at_nearest_station").replace(
+      "{distance}",
+      coverage.nearestSensorKm.toFixed(1),
+    );
+  }
+  if (coverage.level === "low") return t("coverage_low_station");
+  if (coverage.level === "limited") return t("coverage_limited_station");
+  return t("coverage_nearby_sensor");
+}
+
+function getAlertReasonLabel(isAutoDetected: boolean, t: (key: string) => string) {
+  return isAutoDetected
+    ? t("alert_reason_auto_no_citizen")
+    : t("alert_reason_citizen_promoted");
+}
+
 export default function CommandCenter() {
   const t = useT();
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
@@ -112,12 +141,14 @@ export default function CommandCenter() {
       const result = await response.json() as { promoted?: unknown[]; scanned?: number };
       if (notify) {
         showToast(
-          `Auto scan complete: ${result.promoted?.length ?? 0} active from ${result.scanned ?? 0} checks`,
+          t("ambient_scan_complete")
+            .replace("{active}", String(result.promoted?.length ?? 0))
+            .replace("{scanned}", String(result.scanned ?? 0)),
         );
       }
     } catch (error) {
       console.error("Ambient scan failed:", error);
-      if (notify) showToast("Auto scan failed");
+      if (notify) showToast(t("ambient_scan_failed"));
     } finally {
       setAmbientScanState("idle");
     }
@@ -152,7 +183,7 @@ export default function CommandCenter() {
         // kills the listener and liveReports just stays empty forever —
         // looks like incidents "never appear" with zero indication why.
         console.error("reports onSnapshot failed:", error);
-        setLiveDataError(`Live reports feed error: ${error.message}`);
+        setLiveDataError(`${t("live_reports_feed_error")}: ${error.message}`);
       },
     );
   }, []);
@@ -178,7 +209,7 @@ export default function CommandCenter() {
       },
       (error) => {
         console.error("incidents onSnapshot failed:", error);
-        setLiveDataError(`Live incidents feed error: ${error.message}`);
+        setLiveDataError(`${t("live_incidents_feed_error")}: ${error.message}`);
       },
     );
   }, []);
@@ -322,7 +353,7 @@ export default function CommandCenter() {
             fontSize: "0.85rem",
           }}
         >
-          {liveDataError} — incidents may be missing or stale. Check the console / Firestore rules & indexes.
+          {liveDataError} — {t("live_data_error_suffix")}
         </div>
       )}
       <div className="command-stat-grid" aria-label="Command Center metrics">
@@ -341,7 +372,7 @@ export default function CommandCenter() {
             <p>{t("command_feed_title")}</p>
             <h2>{t("command_detail_priority")}</h2>
           </div>
-          <span>{filteredIncidents.length} active</span>
+          <span>{t("command_count_active").replace("{count}", filteredIncidents.length.toString())}</span>
         </div>
 
         <div className="source-filter-row" aria-label="Command Center tabs">
@@ -362,10 +393,10 @@ export default function CommandCenter() {
               className="ambient-refresh-button"
               disabled={ambientScanState === "scanning"}
               onClick={() => void runAmbientScan(true)}
-              title="Refresh automatic sensor and satellite scan"
+              title={t("ambient_scan_refresh_title")}
               type="button"
             >
-              {ambientScanState === "scanning" ? "Scanning" : "Reload"}
+              {ambientScanState === "scanning" ? t("ambient_scan_scanning") : t("ambient_scan_reload")}
             </button>
           )}
         </div>
@@ -419,7 +450,7 @@ export default function CommandCenter() {
             <p>{t("command_detail_map_title")}</p>
             <h2>{t("command_detail_map_layer")}</h2>
           </div>
-          <span>{filteredIncidents.length + mapOverlaySignals.length} mapped</span>
+          <span>{t("command_count_mapped").replace("{count}", (filteredIncidents.length + mapOverlaySignals.length).toString())}</span>
         </div>
 
         <GoogleHotspotMap
@@ -442,7 +473,7 @@ export default function CommandCenter() {
               t={t}
               onResolved={() => {
                 setSelectedId(null);
-                showToast("Incident marked resolved");
+                showToast(t("incident_marked_resolved"));
               }} 
             />
           )
@@ -479,7 +510,7 @@ function IncomingSignals({ signals, t }: { signals: Incident[], t: any }) {
     <div className="incoming-signals-panel">
       <div>
         <p>{t("command_signals_title")}</p>
-        <span>{groupedSignals.length} unverified</span>
+        <span>{t("command_count_unverified").replace("{count}", groupedSignals.length.toString())}</span>
       </div>
 
       {groupedSignals.length === 0 ? (
@@ -494,8 +525,8 @@ function IncomingSignals({ signals, t }: { signals: Incident[], t: any }) {
                 <strong>{signal.neighborhood}</strong>
                 <span>
                   {group.count > 1 
-                    ? `${group.count} reports · awaiting corroboration threshold` 
-                    : (evidence?.promotionReason ?? "Awaiting classification and fusion evidence.")}
+                    ? t("incoming_signal_cluster_waiting").replace("{count}", group.count.toString())
+                    : t("incoming_signal_awaiting_fusion")}
                 </span>
               </li>
             );
@@ -518,7 +549,7 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
     try {
       const collectionName = incident.evidence?.alertTier ? "incidents" : "reports";
       const docId = incident.id.replace("firestore-", "");
-      const actionLabel = getRecommendedAction(incident);
+      const actionLabel = t(getRecommendedActionKey(incident)) || getRecommendedAction(incident);
       await updateDoc(doc(db, collectionName, docId), {
         dispatchStatus: "dispatched",
         dispatchedAction: actionLabel,
@@ -554,7 +585,7 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
       setShowResolveModal(false);
       onResolved();
     } catch (err) {
-      setResolveError(err instanceof Error ? err.message : "Failed to resolve incident");
+      setResolveError(err instanceof Error ? err.message : t("resolve_incident_failed"));
     } finally {
       setIsResolving(false);
     }
@@ -577,8 +608,10 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
     : fallbackEvidence.fusion.finalConfidence;
   const sensorLabel =
     fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.stationName
-      ? `${fallbackEvidence.sensor.stationName} · ${fallbackEvidence.sensor.distanceKm?.toFixed(1)} km`
-      : "Estimated sensor context";
+      ? t("sensor_label_with_distance")
+          .replace("{station}", fallbackEvidence.sensor.stationName)
+          .replace("{distance}", fallbackEvidence.sensor.distanceKm?.toFixed(1) ?? "0.0")
+      : t("sensor_context_estimated");
   const pollutantName = fallbackEvidence.sensor.primaryName ?? "PM2.5";
   const pollutantValue = fallbackEvidence.sensor.primaryValue ?? fallbackEvidence.sensor.pm25;
   const pollutantDelta = fallbackEvidence.sensor.primaryDelta ?? fallbackEvidence.sensor.pm25Delta;
@@ -589,11 +622,17 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
       : `${pollutantName} ${pollutantDelta >= 0 ? "+" : ""}${pollutantDelta}%`;
   const sensorMeta =
     fallbackEvidence.sensor.source === "CPCB" && fallbackEvidence.sensor.lastUpdated
-      ? `updated ${fallbackEvidence.sensor.lastUpdated}`
+      ? t("sensor_updated_at").replace("{time}", fallbackEvidence.sensor.lastUpdated)
       : fallbackEvidence.sensor.trend;
+  const satelliteFreshness = translateFreshness(fallbackEvidence.satellite.freshness, t);
   const satelliteMeta = fallbackEvidence.satellite.windowStart && fallbackEvidence.satellite.windowEnd
-    ? `${fallbackEvidence.satellite.freshness} · ${fallbackEvidence.satellite.windowStart} to ${fallbackEvidence.satellite.windowEnd}`
-    : `${fallbackEvidence.satellite.freshness} · ${fallbackEvidence.satellite.lastPassTime}`;
+    ? t("satellite_window_meta")
+        .replace("{freshness}", satelliteFreshness)
+        .replace("{start}", fallbackEvidence.satellite.windowStart)
+        .replace("{end}", fallbackEvidence.satellite.windowEnd)
+    : `${satelliteFreshness} · ${fallbackEvidence.satellite.lastPassTime}`;
+  const recommendedAction = t(getRecommendedActionKey(incident)) || getRecommendedAction(incident);
+  const coverageLabel = getCoverageLabel(fallbackEvidence.coverage, t);
 
   return (
     <aside className="incident-detail-panel">
@@ -615,14 +654,14 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
           {!incident.photoUrl && <span>{t("hazard_" + incident.hazardType)}</span>}
         </div>
         <div className="evidence-meta">
-          <span>Age: {getIncidentAge(incident.timestamp)}</span>
-          <span>{incident.corroboratingReports ?? 0} nearby reports</span>
-          <span>Health risk: {incident.healthRisk}</span>
+          <span>{t("incident_age").replace("{age}", getIncidentAge(incident.timestamp))}</span>
+          <span>{t("incident_nearby_reports").replace("{count}", String(incident.corroboratingReports ?? 0))}</span>
+          <span>{t("incident_health_risk").replace("{risk}", t("severity_" + incident.healthRisk.toLowerCase()) || incident.healthRisk)}</span>
         </div>
       </div>
 
       <div className="ai-analysis-card">
-        <p>{isAutoDetected ? "Evidence fusion" : t("command_detail_evidence_ai")}</p>
+        <p>{isAutoDetected ? t("command_evidence_fusion") : t("command_detail_evidence_ai")}</p>
         {isAwaitingClassification ? (
           <>
             <h3>{t("command_detail_status_awaiting_class")}</h3>
@@ -634,7 +673,7 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
         ) : (
           <>
             <h3>
-              {displayedFusionConfidence}% fusion confidence
+              {t("fusion_confidence_label").replace("{confidence}", displayedFusionConfidence.toString())}
             </h3>
             <div className="analysis-meter">
               <span style={{ width: `${displayedFusionConfidence}%` }} />
@@ -642,20 +681,20 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
             <small>
               {[
                 fallbackEvidence.fusion.visualWeight > 0
-                  ? `Visual ${incident.aiConfidence}%`
+                  ? t("fusion_visual_confidence").replace("{confidence}", incident.aiConfidence.toString())
                   : null,
                 fallbackEvidence.fusion.sensorWeight > 0
-                  ? `sensor weight ${Math.round(fallbackEvidence.fusion.sensorWeight * 100)}%`
+                  ? t("fusion_sensor_weight").replace("{weight}", Math.round(fallbackEvidence.fusion.sensorWeight * 100).toString())
                   : null,
                 fallbackEvidence.fusion.satelliteWeight > 0
-                  ? `satellite weight ${Math.round(fallbackEvidence.fusion.satelliteWeight * 100)}%`
+                  ? t("fusion_satellite_weight").replace("{weight}", Math.round(fallbackEvidence.fusion.satelliteWeight * 100).toString())
                   : null,
                 (fallbackEvidence.fusion.corroborationWeight ?? 0) > 0
-                  ? `citizen corroboration ${Math.round((fallbackEvidence.fusion.corroborationWeight ?? 0) * 100)}%`
+                  ? t("fusion_citizen_corroboration").replace("{weight}", Math.round((fallbackEvidence.fusion.corroborationWeight ?? 0) * 100).toString())
                   : null,
               ]
                 .filter(Boolean)
-                .join(" · ") || "No corroborating evidence yet"}
+                .join(" · ") || t("fusion_no_evidence")}
             </small>
           </>
         )}
@@ -671,15 +710,16 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
         ) : (
           <>
             <div className="evidence-score-row">
-              <strong>{fallbackEvidence.coverage.label}</strong>
+              <strong>{coverageLabel}</strong>
               <span>H3 {fallbackEvidence.fusion.h3CellId}</span>
             </div>
             <ul>
               <li>
                 <span>{t("command_detail_evidence_citizen")}</span>
                 <strong>
-                  {fallbackEvidence.citizenSignal.reportCount} reports /{" "}
-                  {fallbackEvidence.citizenSignal.windowMinutes} min
+                  {t("citizen_window_summary")
+                    .replace("{reports}", fallbackEvidence.citizenSignal.reportCount.toString())
+                    .replace("{minutes}", fallbackEvidence.citizenSignal.windowMinutes.toString())}
                 </strong>
               </li>
               <li>
@@ -699,14 +739,14 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
                 </strong>
               </li>
             </ul>
-            <small>{fallbackEvidence.alertReason}</small>
+            <small>{getAlertReasonLabel(isAutoDetected, t)}</small>
           </>
         )}
       </div>
 
       <div className="recommended-action-card">
         <p>{t("command_detail_recommended_action")}</p>
-        <h3>{getRecommendedAction(incident)}</h3>
+        <h3>{recommendedAction}</h3>
         <span>
           {t("command_feed_description")}
         </span>
@@ -721,8 +761,8 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
           style={incident.dispatchStatus === "dispatched" ? { background: '#117c72', opacity: 1 } : {}}
         >
           {incident.dispatchStatus === "dispatched" && incident.dispatchedAt 
-            ? `Dispatched at ${new Date(incident.dispatchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` 
-            : isDispatching ? "Dispatching..." : getRecommendedAction(incident)}
+            ? t("dispatch_dispatched_at").replace("{time}", new Date(incident.dispatchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) 
+            : isDispatching ? t("dispatch_dispatching") : recommendedAction}
         </button>
         <button type="button" onClick={() => setShowResolveModal(true)}>{t("command_detail_resolve_button")}</button>
       </div>
@@ -734,9 +774,9 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
             <p style={{ margin: 0, color: '#667085', fontSize: '0.9rem', lineHeight: 1.5 }}>{t("command_detail_resolve_confirm_desc")}</p>
             {resolveError && <p style={{ color: 'red', marginTop: '12px' }}>{resolveError}</p>}
             <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
-              <button disabled={isResolving} onClick={() => setShowResolveModal(false)} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #d8e1da', background: 'white', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              <button disabled={isResolving} onClick={() => setShowResolveModal(false)} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #d8e1da', background: 'white', fontWeight: 700, cursor: 'pointer' }}>{t("common_cancel")}</button>
               <button disabled={isResolving} onClick={handleResolve} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #0f172a', background: '#0f172a', color: 'white', fontWeight: 700, cursor: 'pointer' }}>
-                {isResolving ? "Resolving..." : "Confirm Resolve"}
+                {isResolving ? t("resolve_resolving") : t("resolve_confirm")}
               </button>
             </div>
           </div>
@@ -772,12 +812,13 @@ function UnverifiedSignalDetail({ incident, t }: { incident: Incident, t: any })
           <p>{t("command_detail_unverified_title")}</p>
           <h2>{incident.neighborhood}</h2>
         </div>
-        <span className="detail-severity low">Pending</span>
+        <span className="detail-severity low">{t("status_pending")}</span>
       </div>
       <div className="evidence-awaiting-state">
         <strong>{t("command_detail_status_awaiting_corrob")}</strong>
         <span>
-          {reports} citizen report{reports > 1 ? "s" : ""} received. Waiting for the promotion threshold (3 reports) or sensor/satellite confirmation before municipal escalation.
+          {(reports === 1 ? t("unverified_signal_detail_single") : t("unverified_signal_detail_plural"))
+            .replace("{count}", reports.toString())}
         </span>
       </div>
     </aside>

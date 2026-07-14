@@ -31,6 +31,31 @@ const TARGET_LANGS = [
   "mr", "bn", "gu", "pa", "ur",
   "or", "as",
 ];
+const PLACEHOLDER_RE = /\{[^}]+\}/g;
+const PLACEHOLDER_PREFIX = "ZXQPH";
+const PLACEHOLDER_SUFFIX = "QXZ";
+
+function protectPlaceholders(text) {
+  const placeholders = [];
+  const protectedText = text.replace(PLACEHOLDER_RE, (placeholder) => {
+    const token = `${PLACEHOLDER_PREFIX}${placeholders.length}${PLACEHOLDER_SUFFIX}`;
+    placeholders.push(placeholder);
+    return token;
+  });
+  return { protectedText, placeholders };
+}
+
+function restorePlaceholders(text, placeholders, fallback) {
+  let restored = text;
+  placeholders.forEach((placeholder, index) => {
+    const token = `${PLACEHOLDER_PREFIX}${index}${PLACEHOLDER_SUFFIX}`;
+    restored = restored.replaceAll(token, placeholder);
+  });
+
+  const expected = placeholders.slice().sort().join("|");
+  const actual = (restored.match(PLACEHOLDER_RE) ?? []).sort().join("|");
+  return expected === actual ? restored : fallback;
+}
 
 async function getAccessToken() {
   const auth = new GoogleAuth({
@@ -74,6 +99,8 @@ async function main() {
   const en = JSON.parse(fs.readFileSync(EN_PATH, "utf8"));
   const keys = Object.keys(en);
   const values = Object.values(en);
+  const protectedEntries = values.map(protectPlaceholders);
+  const protectedValues = protectedEntries.map((entry) => entry.protectedText);
   console.log(`\n📄 en.json has ${keys.length} strings.\n`);
 
   console.log("🔑 Getting access token from service account...");
@@ -84,10 +111,14 @@ async function main() {
     const outPath = path.join(LOCALES_DIR, `${lang}.json`);
     process.stdout.write(`🌐 Translating → ${lang}...`);
     try {
-      const translated = await translateAll(values, lang, token);
+      const translated = await translateAll(protectedValues, lang, token);
       const map = {};
       keys.forEach((k, i) => {
-        map[k] = translated[i] ?? values[i];
+        map[k] = restorePlaceholders(
+          translated[i] ?? protectedValues[i],
+          protectedEntries[i].placeholders,
+          values[i],
+        );
       });
 
       // Validate same key count

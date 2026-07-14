@@ -109,6 +109,24 @@ function getEvidenceSourceSummary(incident: Incident) {
   };
 }
 
+function getEvidenceSourceLabel(incident: Incident, t: (key: string) => string) {
+  const tier = incident.evidence?.tier;
+  const sources = tier && TIER_SOURCES[tier] ? [...TIER_SOURCES[tier]] : [incident.source];
+  return sources.map((source) => t(`evidence_source_${source}`) || source).join(" + ");
+}
+
+function getAmbientSourceLabel(source: string, t: (key: string) => string) {
+  const keyBySource: Record<string, string> = {
+    dust: "hazard_auto_dust",
+    industrial: "hazard_auto_industrial",
+    particulate: "hazard_auto_particulate",
+    smog: "hazard_auto_smog",
+    fire: "hazard_auto_fire",
+  };
+  const key = keyBySource[source];
+  return key ? t(key) : source;
+}
+
 const hazardColor: Record<string, string> = {
   fire: "#ef4444", // Red
   smog: "#3b82f6", // Blue
@@ -451,6 +469,7 @@ export default function GoogleHotspotMap({
     const reportCount = cluster?.promotedIncident?.linkedReportIds?.length ?? cluster?.incidents.length ?? 1;
     const isPromoted = !!cluster?.promotedIncident;
     const evidenceSummary = getEvidenceSourceSummary(selectedIncident);
+    const evidenceSourceLabel = getEvidenceSourceLabel(selectedIncident, t);
 
     // Build the sensor trigger line for ambient/sensor-only incidents.
     // New docs use triggerPollutants; elevatedPollutants is raw legacy context.
@@ -465,7 +484,7 @@ export default function GoogleHotspotMap({
               pollutant.deltaPct > 0 ? ` (+${Math.round(pollutant.deltaPct)}%)` : "";
             return `${pollutant.name}${value}${delta}`;
           });
-          return parts.length > 0 ? `Trigger: ${parts.join(" &middot; ")}` : "";
+          return parts.length > 0 ? `${t("map_trigger")}: ${parts.join(" &middot; ")}` : "";
         }
 
         const ep = incident.elevatedPollutants;
@@ -474,20 +493,13 @@ export default function GoogleHotspotMap({
         if (ep?.pm10 != null && ep.pm10 > 0) parts.push(`PM10 ${Math.round(ep.pm10)} µg/m³`);
         if (ep?.no2 != null && ep.no2 > 0) parts.push(`NO2 ${Math.round(ep.no2)} µg/m³`);
         if (ep?.so2 != null && ep.so2 > 0) parts.push(`SO2 ${Math.round(ep.so2)} µg/m³`);
-        return parts.length > 0 ? `Observed: ${parts.join(" &middot; ")}` : "";
+        return parts.length > 0 ? `${t("map_observed")}: ${parts.join(" &middot; ")}` : "";
       })();
 
       const sourceLine = (() => {
         const src = incident.possibleSources ?? [];
         if (src.length === 0) return "";
-        const labels: Record<string, string> = {
-          dust: "Likely dust / PM10 spike",
-          industrial: "Likely industrial emission",
-          particulate: "Fine particulate spike",
-          smog: "Likely smog trap",
-          fire: "Possible burning hotspot",
-        };
-        return "Possible sources: " + src.map((s) => labels[s] ?? s).join(" &middot; ");
+        return `${t("map_possible_sources")}: ${src.map((s) => getAmbientSourceLabel(s, t)).join(" &middot; ")}`;
       })();
 
       const tierLine = evidenceSummary.count === 1
@@ -499,7 +511,7 @@ export default function GoogleHotspotMap({
           <strong>${headline}</strong>
           ${pollutantLine ? `<span class="infowindow-pollutants">${pollutantLine}</span>` : ""}
           ${sourceLine ? `<span class="infowindow-sources">${sourceLine}</span>` : ""}
-          ${mode === "operations" ? `<span class="infowindow-tier">${tierLine} &middot; ${evidenceSummary.label}</span>` : ""}
+          ${mode === "operations" ? `<span class="infowindow-tier">${tierLine} &middot; ${evidenceSourceLabel}</span>` : ""}
         </div>
       `;
     }
@@ -528,7 +540,7 @@ export default function GoogleHotspotMap({
           <strong>${selectedIncident.neighborhood}</strong>
           <span>${t("hazard_" + selectedIncident.hazardType) || selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% ${t("map_confidence")}</span>
           ${reportCount > 1 ? `<span>${t("map_citizen_reports").replace("{count}", reportCount.toString())}</span>` : ""}
-          ${mode === "operations" ? `<span>${evidenceSummary.count === 1 ? t("map_evidence_source_single") : t("map_evidence_sources").replace("{count}", evidenceSummary.count.toString())} · ${evidenceSummary.label}</span>` : ""}
+          ${mode === "operations" ? `<span>${evidenceSummary.count === 1 ? t("map_evidence_source_single") : t("map_evidence_sources").replace("{count}", evidenceSummary.count.toString())} · ${evidenceSourceLabel}</span>` : ""}
         </div>
       `;
     }

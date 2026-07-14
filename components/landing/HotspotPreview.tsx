@@ -4,6 +4,7 @@ import type { Incident, Severity } from "@/lib/types";
 import { useEffect, useRef, useState } from "react";
 import { loadGoogleMaps, type GoogleMapInstance, type GoogleMapMarker } from "@/lib/googleMaps";
 import { CITY_CENTER } from "@/lib/mapConstants";
+import { useT } from "@/lib/languageContext";
 
 const severityColor: Record<Severity, string> = {
   critical: "#ef4444",
@@ -12,6 +13,7 @@ const severityColor: Record<Severity, string> = {
 };
 
 export default function HotspotPreview({ incidents }: { incidents: Incident[] }) {
+  const t = useT();
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRefs = useRef<GoogleMapMarker[]>([]);
@@ -91,7 +93,7 @@ export default function HotspotPreview({ incidents }: { incidents: Incident[] })
         {/* Clean floating header */}
         <div style={{ position: 'absolute', top: '16px', left: '16px', zIndex: 10, display: 'flex', alignItems: 'center', gap: '8px', background: 'white', padding: '8px 16px', borderRadius: '24px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', border: '1px solid rgba(0,0,0,0.05)' }}>
           <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', boxShadow: '0 0 8px rgba(16, 185, 129, 0.4)' }} />
-          <span style={{ color: 'var(--ink)', fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Recent Reports</span>
+          <span style={{ color: 'var(--ink)', fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{t("hotspot_preview_recent_reports")}</span>
         </div>
       </div>
     </aside>

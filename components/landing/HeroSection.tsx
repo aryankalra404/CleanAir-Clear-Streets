@@ -100,7 +100,7 @@ export default function HeroSection() {
             {t("hero_report_button")}
           </Link>
           <Link href="/map" className="btn btn-outline">
-            Explore live map
+            {t("hero_explore_live_map")}
           </Link>
         </div>
 

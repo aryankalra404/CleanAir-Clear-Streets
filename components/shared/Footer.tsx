@@ -21,27 +21,27 @@ export default function Footer() {
             </Link>
             <h2>{t("jury_snapshot_title")}</h2>
             <p className="gov-affiliation">
-              An official initiative by the government of India.
+              {t("footer_affiliation")}
             </p>
           </div>
           
           <div className="footer-links">
             <div className="footer-nav-column">
-              <h3>Resources</h3>
-              <Link href="/map">Live Map</Link>
-              <Link href="/report">Report Hotspot</Link>
+              <h3>{t("footer_resources")}</h3>
+              <Link href="/map">{t("footer_live_map")}</Link>
+              <Link href="/report">{t("footer_report_hotspot")}</Link>
             </div>
             <div className="footer-nav-column">
-              <h3>Policies</h3>
-              <Link href="#">Privacy Policy</Link>
-              <Link href="#">Terms of Service</Link>
-              <Link href="#">Accessibility</Link>
+              <h3>{t("footer_policies")}</h3>
+              <Link href="#">{t("footer_privacy_policy")}</Link>
+              <Link href="#">{t("footer_terms_of_service")}</Link>
+              <Link href="#">{t("footer_accessibility")}</Link>
             </div>
           </div>
         </div>
 
         <div className="footer-bottom">
-          <p>&copy; {new Date().getFullYear()} SwachhVayu Initiative. All rights reserved.</p>
+          <p>{t("footer_copyright").replace("{year}", new Date().getFullYear().toString())}</p>
         </div>
       </div>
     </footer>

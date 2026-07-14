@@ -11,6 +11,14 @@ const actionByHazard: Record<Incident["hazardType"], string> = {
   particulate: "Dispatch inspection team to confirm source",
 };
 
+const actionKeyByHazard: Record<Incident["hazardType"], string> = {
+  fire: "action_dispatch_fire_cleanup",
+  smog: "action_issue_traffic_advisory",
+  dust: "action_deploy_water_mist",
+  industrial: "action_notify_pollution_board",
+  particulate: "action_dispatch_inspection",
+};
+
 // Template stat cards. Every value/detail here is a placeholder that
 // CommandCenter.tsx always overwrites with a live-computed figure (or "—"
 // when no live figure is available yet) — see the `stats` useMemo there.
@@ -39,6 +47,10 @@ export const commandStats = [
 
 export function getRecommendedAction(incident: Incident) {
   return actionByHazard[incident.hazardType];
+}
+
+export function getRecommendedActionKey(incident: Incident) {
+  return actionKeyByHazard[incident.hazardType];
 }
 
 export function formatStatus(status: Incident["status"]) {
