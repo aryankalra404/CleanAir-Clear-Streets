@@ -63,7 +63,7 @@
   "command_feed_description": "Dispatch based on severity, confidence, local exposure, and forecasted spread.",
   "command_feed_empty_title": "No live incidents yet",
   "command_feed_empty_desc": "Turn on demo incidents to preview the dashboard with sample data.",
-  "command_signals_title": "Incoming signals",
+  "command_signals_title": "Unverified Reports",
   "command_signals_empty_title": "No raw citizen reports waiting for corroboration.",
   "command_signals_empty_desc": "Promoted Firestore incidents will appear here as soon as the corroboration threshold is crossed.",
   "command_detail_title": "Incident detail",

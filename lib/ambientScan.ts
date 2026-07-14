@@ -1,6 +1,6 @@
 import "server-only";
 
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import type { NearbyStationReading } from "@/lib/cpcbSensor";
 import { getNearestStationReading, getPrimaryPollutant } from "@/lib/cpcbSensor";
@@ -226,77 +226,84 @@ export async function scanAmbientHotspots(): Promise<{
       ? `Elevated ${elevatedNames.join(" · ")}`
       : "Sensor anomaly detected";
 
-    // Doc ID has no hazard suffix — one doc per cell, period.
-    await setDoc(
-      doc(db, "incidents", `ambient-${h3CellId}`),
-      {
-        aiConfidence: Math.round(confidence),
-        createdAt: serverTimestamp(),
-        geminiClassification: {
-          confidence: Math.round(confidence),
-          description: `${elevatedLabel} — ${tierPromotionReason(tier, 0)}`,
-          severity: getSeverity(confidence),
-          type: hazardType,
+    // Check if this cell's incident doc already exists so we can preserve
+    // its original createdAt timestamp. setDoc with merge:true would
+    // overwrite createdAt on every scan, making Age always show "1m".
+    const incidentRef = doc(db, "incidents", `ambient-${h3CellId}`);
+    const existingSnap = await getDoc(incidentRef);
+
+    const sharedPayload = {
+      aiConfidence: Math.round(confidence),
+      geminiClassification: {
+        confidence: Math.round(confidence),
+        description: `${elevatedLabel} — ${tierPromotionReason(tier, 0)}`,
+        severity: getSeverity(confidence),
+        type: hazardType,
+      },
+      h3CellId,
+      hazardLabel: elevatedLabel,
+      possibleSources,
+      elevatedPollutants: {
+        pm25: station?.pm25 ?? null,
+        pm10: station?.pm10 ?? null,
+        no2: station?.no2 ?? null,
+        so2: station?.so2 ?? null,
+      },
+      location: { label: cell.label, lat: String(cell.lat), lng: String(cell.lng) },
+      photoUrl: "",
+      source,
+      status: "under_review",
+      updatedAt: serverTimestamp(),
+      validation: {
+        alertReason: tierPromotionReason(tier, 0),
+        alertTier: true,
+        tier,
+        citizenSignal: { averageConfidence: 0, reportCount: 0, windowMinutes: 0 },
+        coverage: {
+          label: sensorResult.distanceKm !== null ? `${sensorResult.distanceKm.toFixed(1)} km to nearest station` : "No nearby station",
+          level: sensorResult.distanceKm !== null && sensorResult.distanceKm <= 1 ? "good" : "limited",
+          nearestSensorKm: sensorResult.distanceKm ?? 5,
         },
-        h3CellId,
-        hazardLabel: elevatedLabel,
-        // possibleSources lets the map popup list all triggered categories
-        // ("Possible sources: Dust, Industrial") without committing to one.
-        possibleSources,
-        // Raw sensor readings so the popup can display actual µg/m³ values.
-        elevatedPollutants: {
-          pm25: station?.pm25 ?? null,
-          pm10: station?.pm10 ?? null,
-          no2: station?.no2 ?? null,
-          so2: station?.so2 ?? null,
+        fusion: {
+          coverageAdjusted: false,
+          finalConfidence: Math.round(confidence),
+          h3CellId,
+          satelliteWeight: satelliteResult.hazardWeight,
+          sensorWeight: sensorResult.supported ? 0.4 : 0,
+          visualWeight: 0,
         },
-        location: { label: cell.label, lat: String(cell.lat), lng: String(cell.lng) },
-        photoUrl: "",
-        source,
-        status: "under_review",
-        updatedAt: serverTimestamp(),
-        validation: {
-          alertReason: tierPromotionReason(tier, 0),
-          alertTier: true,
-          tier,
-          citizenSignal: { averageConfidence: 0, reportCount: 0, windowMinutes: 0 },
-          coverage: {
-            label: sensorResult.distanceKm !== null ? `${sensorResult.distanceKm.toFixed(1)} km to nearest station` : "No nearby station",
-            level: sensorResult.distanceKm !== null && sensorResult.distanceKm <= 1 ? "good" : "limited",
-            nearestSensorKm: sensorResult.distanceKm ?? 5,
-          },
-          fusion: {
-            coverageAdjusted: false,
-            finalConfidence: Math.round(confidence),
-            h3CellId,
-            satelliteWeight: satelliteResult.hazardWeight,
-            sensorWeight: sensorResult.supported ? 0.4 : 0,
-            visualWeight: 0,
-          },
-          promotionReason: tierPromotionReason(tier, 0),
-          satellite: {
-            freshness: satellite && !satellite.error ? "fresh" : "stale",
-            lastPassTime: satellite?.timestamp ?? "unavailable",
-            signal: satelliteResult.supported
-              ? "Anomaly crosses hazard threshold"
-              : "No decisive anomaly",
-            source: "Earth Engine",
-            anomalyScore: satelliteResult.hazardWeight,
-            hazardWeight: satelliteResult.hazardWeight,
-          },
-          sensor: {
-            pm25Delta: sensorResult.pollutantName === "PM2.5" ? sensorResult.deltaPct : 0,
-            primaryDelta: sensorResult.deltaPct,
-            primaryName: sensorResult.pollutantName,
-            primaryValue: sensorResult.pollutantValue,
-            distanceKm: sensorResult.distanceKm ?? undefined,
-            source: "CPCB",
-            trend: sensorResult.supported ? "rising" : "flat",
-          },
+        promotionReason: tierPromotionReason(tier, 0),
+        satellite: {
+          freshness: satellite && !satellite.error ? "fresh" : "stale",
+          lastPassTime: satellite?.timestamp ?? "unavailable",
+          signal: satelliteResult.supported
+            ? "Anomaly crosses hazard threshold"
+            : "No decisive anomaly",
+          source: "Earth Engine",
+          anomalyScore: satelliteResult.hazardWeight,
+          hazardWeight: satelliteResult.hazardWeight,
+        },
+        sensor: {
+          pm25Delta: sensorResult.pollutantName === "PM2.5" ? sensorResult.deltaPct : 0,
+          primaryDelta: sensorResult.deltaPct,
+          primaryName: sensorResult.pollutantName,
+          primaryValue: sensorResult.pollutantValue,
+          distanceKm: sensorResult.distanceKm ?? undefined,
+          source: "CPCB",
+          trend: sensorResult.supported ? "rising" : "flat",
         },
       },
-      { merge: true },
-    );
+    };
+
+    if (existingSnap.exists()) {
+      // Doc already exists — update in place, preserving the original createdAt
+      // so the "Age" displayed in the Command Center reflects when pollution
+      // was FIRST detected, not when this scan last ran.
+      await updateDoc(incidentRef, sharedPayload);
+    } else {
+      // Brand new detection — set createdAt for the first and only time.
+      await setDoc(incidentRef, { ...sharedPayload, createdAt: serverTimestamp() });
+    }
 
     promoted.push({ cell: cell.label, hazardType, tier, h3CellId });
   }

@@ -234,33 +234,40 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       });
     }
 
-    transaction.set(
-      doc(db!, "incidents", `${h3CellId}-${hazardType}`),
-      {
-        aiConfidence: avgConfidence,
-        createdAt: serverTimestamp(),
-        geminiClassification: {
-          confidence: avgConfidence,
-          description: `${hazardType} hotspot — ${tierPromotionReason(tier, hazardReports.length)}`,
-          severity: getSeverity(avgConfidence),
-          type: primaryReport.geminiClassification?.type ?? hazardType,
-        },
-        h3CellId,
-        hazardLabel: primaryReport.hazardLabel ?? `Citizen ${hazardType} cluster`,
-        linkedReportIds: hazardReports.map((report) => report.id),
-        location: primaryReport.location ?? {
-          label: "Citizen report cluster",
-          lat: "28.6264",
-          lng: "77.3192",
-        },
-        photoUrl: bestPhotoUrl,
-        source: "citizen_cluster",
-        status: "under_review",
-        updatedAt: serverTimestamp(),
-        validation: promotedValidation,
+    const incidentRef = doc(db!, "incidents", `${h3CellId}-${hazardType}`);
+    // Read the existing incident doc inside the transaction to check whether
+    // it already has a createdAt. If it does, we must NOT overwrite it —
+    // otherwise every new corroborating report resets the incident's age to
+    // "just now", which makes Age always show 1m regardless of how long the
+    // hotspot has been active. Only include createdAt on first creation.
+    const existingIncidentSnap = await transaction.get(incidentRef);
+    const incidentPayload: Record<string, unknown> = {
+      aiConfidence: avgConfidence,
+      geminiClassification: {
+        confidence: avgConfidence,
+        description: `${hazardType} hotspot — ${tierPromotionReason(tier, hazardReports.length)}`,
+        severity: getSeverity(avgConfidence),
+        type: primaryReport.geminiClassification?.type ?? hazardType,
       },
-      { merge: true },
-    );
+      h3CellId,
+      hazardLabel: primaryReport.hazardLabel ?? `Citizen ${hazardType} cluster`,
+      linkedReportIds: hazardReports.map((report) => report.id),
+      location: primaryReport.location ?? {
+        label: "Citizen report cluster",
+        lat: "28.6264",
+        lng: "77.3192",
+      },
+      photoUrl: bestPhotoUrl,
+      source: "citizen_cluster",
+      status: "under_review",
+      updatedAt: serverTimestamp(),
+      validation: promotedValidation,
+    };
+    if (!existingIncidentSnap.exists()) {
+      // First time this cell+hazard is being promoted — stamp the creation time.
+      incidentPayload.createdAt = serverTimestamp();
+    }
+    transaction.set(incidentRef, incidentPayload, { merge: true });
     }
   });
 }
