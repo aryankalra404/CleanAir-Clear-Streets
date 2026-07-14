@@ -56,6 +56,9 @@ export interface IncidentEvidence {
     visualWeight: number;
     sensorWeight: number;
     satelliteWeight: number;
+    // Only present on crowd-corroborated (>= 3 report) promotions — the
+    // weight independent citizen agreement contributed to finalConfidence.
+    corroborationWeight?: number;
   };
   promotionReason: string;
   satellite: {

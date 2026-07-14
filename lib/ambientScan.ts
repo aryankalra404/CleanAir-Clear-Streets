@@ -6,6 +6,7 @@ import type { NearbyStationReading } from "@/lib/cpcbSensor";
 import { getNearestStationReading, getPrimaryPollutant } from "@/lib/cpcbSensor";
 import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
+import { computeFusionConfidence, satelliteWeightToScore, sensorDeltaToScore } from "@/lib/fusionConfidence";
 import { getH3CellId, getSeverity } from "@/lib/reportSubmissions";
 import {
   SENSOR_PROXIMITY_KM,
@@ -210,10 +211,19 @@ export async function scanAmbientHotspots(): Promise<{
     const source: "sensor" | "satellite" =
       tier === "satellite_detected" ? "satellite" : "sensor";
 
-    const confidence = Math.max(
-      sensorResult.supported ? Math.min(95, 50 + sensorResult.deltaPct / 2) : 0,
-      satelliteResult.supported ? Math.round(satelliteResult.hazardWeight * 100) : 0,
-    );
+    // Real weighted fusion, not max(). Ambient detections genuinely have no
+    // visual or corroboration evidence — those sources are omitted (null),
+    // not zeroed, so the displayed weights honestly reflect only sensor and
+    // satellite. This also fixes the "Visual 95%" mislabeling bug: with no
+    // visualScore, fusion.visualWeight comes out to a real 0, and the UI
+    // (CommandCenter.tsx) only renders a Visual line when that weight > 0.
+    const fusion = computeFusionConfidence({
+      corroborationScore: null,
+      satelliteScore: satellite && !satellite.error ? satelliteWeightToScore(satelliteResult.hazardWeight) : null,
+      sensorScore: station ? sensorDeltaToScore(sensorResult.deltaPct) : null,
+      visualScore: null,
+    });
+    const confidence = fusion.finalConfidence;
 
     // Build a label that lists which pollutants are actually elevated,
     // e.g. "Elevated PM2.5 · NO2" — honest and immediately actionable.
@@ -268,9 +278,9 @@ export async function scanAmbientHotspots(): Promise<{
           coverageAdjusted: false,
           finalConfidence: Math.round(confidence),
           h3CellId,
-          satelliteWeight: satelliteResult.hazardWeight,
-          sensorWeight: sensorResult.supported ? 0.4 : 0,
-          visualWeight: 0,
+          satelliteWeight: fusion.satelliteWeight,
+          sensorWeight: fusion.sensorWeight,
+          visualWeight: fusion.visualWeight,
         },
         promotionReason: tierPromotionReason(tier, 0),
         satellite: {

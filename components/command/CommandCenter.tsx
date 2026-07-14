@@ -535,9 +535,22 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
               <span style={{ width: `${fallbackEvidence.fusion.finalConfidence}%` }} />
             </div>
             <small>
-              Visual {incident.aiConfidence}% · sensor weight{" "}
-              {Math.round(fallbackEvidence.fusion.sensorWeight * 100)}% · satellite weight{" "}
-              {Math.round(fallbackEvidence.fusion.satelliteWeight * 100)}%
+              {[
+                fallbackEvidence.fusion.visualWeight > 0
+                  ? `Visual ${incident.aiConfidence}%`
+                  : null,
+                fallbackEvidence.fusion.sensorWeight > 0
+                  ? `sensor weight ${Math.round(fallbackEvidence.fusion.sensorWeight * 100)}%`
+                  : null,
+                fallbackEvidence.fusion.satelliteWeight > 0
+                  ? `satellite weight ${Math.round(fallbackEvidence.fusion.satelliteWeight * 100)}%`
+                  : null,
+                (fallbackEvidence.fusion.corroborationWeight ?? 0) > 0
+                  ? `citizen corroboration ${Math.round((fallbackEvidence.fusion.corroborationWeight ?? 0) * 100)}%`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "No corroborating evidence yet"}
             </small>
           </>
         )}

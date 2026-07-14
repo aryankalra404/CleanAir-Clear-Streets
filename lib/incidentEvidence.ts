@@ -65,7 +65,7 @@ export function buildIncidentEvidence(incident: Incident): IncidentEvidence {
       finalConfidence,
       coverageAdjusted: coverageLevel !== "good",
       h3CellId: fallbackH3ByHazard[incident.hazardType],
-      visualWeight: incident.source === "citizen" ? 0.45 : 0.25,
+      visualWeight: incident.source === "citizen" ? 0.45 : 0,
       sensorWeight: coverageLevel === "low" ? 0.12 : 0.34,
       satelliteWeight: satelliteFresh ? 0.32 : 0.2,
     },

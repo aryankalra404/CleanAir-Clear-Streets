@@ -10,6 +10,11 @@ import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { getWindData } from "@/lib/openWeather";
 import { recordPollutionSnapshot } from "@/lib/pollutionSnapshots";
 import {
+  computeFusionConfidence,
+  satelliteWeightToScore,
+  sensorDeltaToScore,
+} from "@/lib/fusionConfidence";
+import {
   DEFAULT_H3_CELL_ID,
   promoteCellIfThresholdPassed,
 } from "@/lib/reportSubmissions";
@@ -358,13 +363,21 @@ export async function POST(request: Request) {
         : satelliteChannel === "fireDustSmoke"
           ? (satelliteData?.hazardWeights.fireDustSmoke ?? 0)
           : (satelliteData?.anomalyScore ?? 0);
-    const satelliteBoost = Math.round(satelliteAnomaly * 12);
-    const finalConfidence = Math.min(
-      98,
-      pollutionSignalConfidence > 0
-        ? pollutionSignalConfidence + satelliteBoost
-        : satelliteBoost,
-    );
+    // Real weighted fusion instead of "Gemini score + a satellite nudge,
+    // with sensor decoration that never enters the math". A source only
+    // gets scored — and only pulls weight — when it's real: the estimated
+    // sensor fallback (no station within range) doesn't count as sensor
+    // evidence, and a failed satellite fetch doesn't count as satellite
+    // evidence, so the displayed weights always reflect what actually
+    // contributed to the number above them.
+    const fusion = computeFusionConfidence({
+      corroborationScore: null, // corroboration only applies once a cell is promoted — see reportSubmissions.ts
+      satelliteScore:
+        satelliteData && !satelliteData.error ? satelliteWeightToScore(satelliteAnomaly) : null,
+      sensorScore: nearestStation ? sensorDeltaToScore(primaryPollutant.delta) : null,
+      visualScore: pollutionSignalConfidence,
+    });
+    const finalConfidence = fusion.finalConfidence;
 
     const snapshot = await recordPollutionSnapshot({
       lat,
@@ -399,9 +412,9 @@ export async function POST(request: Request) {
           coverageAdjusted: true,
           finalConfidence,
           h3CellId,
-          satelliteWeight: 0.2,
-          sensorWeight: 0.12,
-          visualWeight: 0.5,
+          satelliteWeight: fusion.satelliteWeight,
+          sensorWeight: fusion.sensorWeight,
+          visualWeight: fusion.visualWeight,
         },
         promotionReason: "Gemini classified report; waiting for corroboration threshold.",
         satellite: {

@@ -11,6 +11,12 @@ import {
 import { latLngToCell } from "h3-js";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { resolveIncidentHazardType } from "@/lib/firestoreReports";
+import {
+  computeFusionConfidence,
+  corroborationCountToScore,
+  satelliteWeightToScore,
+  sensorDeltaToScore,
+} from "@/lib/fusionConfidence";
 import type { HazardType, IncidentEvidence } from "@/lib/types";
 import {
   checkStoredSensorSupport,
@@ -173,6 +179,30 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
     const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
     const promotionReason = tierPromotionReason(tier, hazardReports.length);
 
+    // Pull the strongest *real* sensor/satellite reading from anywhere in
+    // the cluster — same "any report, not just primary" reasoning as the
+    // support checks above — so the fusion score isn't blind to evidence
+    // that happened to land on a non-primary report.
+    const bestSensorDelta = hazardReports.reduce((max, r) => {
+      const sensor = r.data.validation?.sensor;
+      if (!sensor || sensor.distanceKm == null) return max;
+      const delta = sensor.primaryDelta ?? sensor.pm25Delta ?? 0;
+      return delta > max ? delta : max;
+    }, -Infinity);
+    const bestSatelliteWeight = hazardReports.reduce((max, r) => {
+      const satellite = r.data.validation?.satellite;
+      if (!satellite) return max;
+      const weight = satellite.hazardWeight ?? satellite.anomalyScore ?? 0;
+      return weight > max ? weight : max;
+    }, -Infinity);
+
+    const fusion = computeFusionConfidence({
+      corroborationScore: corroborationCountToScore(hazardReports.length),
+      satelliteScore: bestSatelliteWeight === -Infinity ? null : satelliteWeightToScore(bestSatelliteWeight),
+      sensorScore: bestSensorDelta === -Infinity ? null : sensorDeltaToScore(bestSensorDelta),
+      visualScore: avgConfidence,
+    });
+
     const baseValidation = primaryReport.validation;
     const promotedValidation = baseValidation ? {
       ...baseValidation,
@@ -187,7 +217,11 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       },
       fusion: {
         ...baseValidation.fusion,
-        finalConfidence: Math.min(99, baseValidation.fusion.finalConfidence + (hazardReports.length - 1) * 4),
+        finalConfidence: fusion.finalConfidence,
+        satelliteWeight: fusion.satelliteWeight,
+        sensorWeight: fusion.sensorWeight,
+        visualWeight: fusion.visualWeight,
+        corroborationWeight: fusion.corroborationWeight,
       },
       promotionReason,
     } : {
@@ -207,11 +241,12 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       },
       fusion: {
         coverageAdjusted: true,
-        finalConfidence: Math.min(98, avgConfidence + 18),
+        finalConfidence: fusion.finalConfidence,
         h3CellId,
-        satelliteWeight: 0.2,
-        sensorWeight: 0.12,
-        visualWeight: 0.5,
+        satelliteWeight: fusion.satelliteWeight,
+        sensorWeight: fusion.sensorWeight,
+        visualWeight: fusion.visualWeight,
+        corroborationWeight: fusion.corroborationWeight,
       },
       promotionReason,
       satellite: {
@@ -227,6 +262,18 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       },
     };
 
+    // Read the existing incident doc *before* any writes in this
+    // transaction — Firestore transactions require all reads to happen
+    // before any writes, or the whole transaction throws. This used to run
+    // after the report-status update loop below, which meant every
+    // promotion attempt was silently failing: the throw happened after the
+    // report's own "classified" update had already committed (a separate,
+    // non-transactional updateDoc earlier in classify-report/route.ts), so
+    // geminiClassification stayed intact and the report kept showing up
+    // fine in the UI — it just never actually got promoted.
+    const incidentRef = doc(db!, "incidents", `${h3CellId}-${hazardType}`);
+    const existingIncidentSnap = await transaction.get(incidentRef);
+
     for (const report of hazardReports) {
       transaction.update(report.ref, {
         status: "under_review",
@@ -234,13 +281,6 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       });
     }
 
-    const incidentRef = doc(db!, "incidents", `${h3CellId}-${hazardType}`);
-    // Read the existing incident doc inside the transaction to check whether
-    // it already has a createdAt. If it does, we must NOT overwrite it —
-    // otherwise every new corroborating report resets the incident's age to
-    // "just now", which makes Age always show 1m regardless of how long the
-    // hotspot has been active. Only include createdAt on first creation.
-    const existingIncidentSnap = await transaction.get(incidentRef);
     const incidentPayload: Record<string, unknown> = {
       aiConfidence: avgConfidence,
       geminiClassification: {
