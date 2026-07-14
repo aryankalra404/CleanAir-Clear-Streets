@@ -319,9 +319,14 @@ export async function fetchNearbyStations(
 
 export async function getNearestStationReading(lat: number, lng: number) {
   const stations = await fetchNearbyStations(lat, lng);
-  const nearestStation = stations[0];
-  if (!nearestStation || !hasUsablePollutantData(nearestStation)) return null;
-  return nearestStation;
+  // Was taking stations[0] (absolute nearest) and bailing to null if *that*
+  // station had no usable pollutant data — discarding a perfectly good
+  // reading from the next-nearest station even when it's well within the
+  // 3km support radius. CPCB stations going offline/reporting all-null is
+  // common, so this silently zeroed out sensor support more than it should
+  // have. Now picks the nearest station that actually has data.
+  const nearestStation = stations.find((station) => hasUsablePollutantData(station));
+  return nearestStation ?? null;
 }
 
 export function getPm25DeltaFromReference(pm25: number | null) {
