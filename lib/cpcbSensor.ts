@@ -22,10 +22,10 @@ const NCR_STATES = ["Delhi", "Haryana", "Uttar Pradesh", "Rajasthan"];
 // the 24h limit — a reading must exceed THESE by ≥50% to count as a sensor
 // confirmation of a citizen-reported incident.
 // (WHO values are still used in the health-risk badge layer, not here.)
-const WHO_PM25_REFERENCE = 60;  // CPCB 24h standard (WHO: 15)
-const WHO_PM10_REFERENCE = 100; // CPCB 24h standard (WHO: 45)
-const WHO_NO2_REFERENCE = 80;   // CPCB 24h standard (WHO: 25)
-const WHO_SO2_REFERENCE = 80;   // CPCB 24h standard (WHO: 40)
+const CPCB_PM25_REFERENCE = 60;
+const CPCB_PM10_REFERENCE = 100;
+const CPCB_NO2_REFERENCE = 80;
+const CPCB_SO2_REFERENCE = 80;
 
 type CpcbApiResponse = {
   records?: CpcbRecord[];
@@ -361,7 +361,7 @@ export async function getNearestStationReading(lat: number, lng: number) {
 
 export function getPm25DeltaFromReference(pm25: number | null) {
   if (pm25 === null) return 0;
-  return Math.round(((pm25 - WHO_PM25_REFERENCE) / WHO_PM25_REFERENCE) * 100);
+  return Math.round(((pm25 - CPCB_PM25_REFERENCE) / CPCB_PM25_REFERENCE) * 100);
 }
 
 export function getPrimaryPollutant(
@@ -371,20 +371,36 @@ export function getPrimaryPollutant(
   if (!station) return { name: "PM2.5", value: null, delta: 0 };
   
   if (classificationType === "dust" && station.pm10 !== null && station.pm10 !== undefined) {
-    return { name: "PM10", value: station.pm10, delta: Math.round(((station.pm10 - WHO_PM10_REFERENCE) / WHO_PM10_REFERENCE) * 100) };
+    return { name: "PM10", value: station.pm10, delta: Math.round(((station.pm10 - CPCB_PM10_REFERENCE) / CPCB_PM10_REFERENCE) * 100) };
+  }
+
+  // If PM2.5 is unavailable, PM10 can still establish a particulate event,
+  // but it cannot honestly distinguish dust from general coarse particulate.
+  if (
+    classificationType === "particulate" &&
+    station.pm25 == null &&
+    station.pm10 != null
+  ) {
+    return {
+      name: "PM10",
+      value: station.pm10,
+      delta: Math.round(((station.pm10 - CPCB_PM10_REFERENCE) / CPCB_PM10_REFERENCE) * 100),
+    };
   }
   
   if (classificationType === "industrial") {
-    const no2Delta = station.no2 != null ? Math.round(((station.no2 - WHO_NO2_REFERENCE) / WHO_NO2_REFERENCE) * 100) : 0;
-    const so2Delta = station.so2 != null ? Math.round(((station.so2 - WHO_SO2_REFERENCE) / WHO_SO2_REFERENCE) * 100) : 0;
+    const no2Delta = station.no2 != null ? Math.round(((station.no2 - CPCB_NO2_REFERENCE) / CPCB_NO2_REFERENCE) * 100) : 0;
+    const so2Delta = station.so2 != null ? Math.round(((station.so2 - CPCB_SO2_REFERENCE) / CPCB_SO2_REFERENCE) * 100) : 0;
     if (no2Delta >= so2Delta && station.no2 != null) return { name: "NO2", value: station.no2, delta: no2Delta };
     if (station.so2 != null) return { name: "SO2", value: station.so2, delta: so2Delta };
   }
   
   // Default to PM2.5 for fire/smog, or if the preferred pollutant is missing
-  return { 
-    name: "PM2.5", 
-    value: station.pm25 ?? null, 
-    delta: station.pm25 != null ? Math.round(((station.pm25 - WHO_PM25_REFERENCE) / WHO_PM25_REFERENCE) * 100) : 0 
+  return {
+    name: "PM2.5",
+    value: station.pm25 ?? null,
+    delta: station.pm25 != null
+      ? Math.round(((station.pm25 - CPCB_PM25_REFERENCE) / CPCB_PM25_REFERENCE) * 100)
+      : 0,
   };
 }

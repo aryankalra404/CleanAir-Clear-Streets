@@ -77,7 +77,7 @@ export function computeFusionConfidence(sources: FusionSources): FusionResult {
 }
 
 /**
- * Converts a sensor's "% above WHO reference" delta into a 0-100 score on
+ * Converts a sensor's "% above CPCB 24h reference" delta into a 0-100 score on
  * the same scale as the other sources. 50% (the support threshold used
  * elsewhere in the app) maps to 75; scales up to a 95 ceiling; floors at 0
  * for a flat/negative delta rather than going negative.

@@ -88,6 +88,9 @@ export interface IncidentEvidence {
     primaryDelta?: number;
     primaryName?: string;
     primaryValue?: number | null;
+    localBaselineDeltaPct?: number | null;
+    localBaselineValue?: number | null;
+    baselineSource?: "station_history" | "delhi_median";
     trend: "rising" | "flat" | "falling" | "insufficient_data";
     source?: "CPCB" | "estimated";
     stationName?: string;
@@ -114,6 +117,8 @@ export interface Incident {
   timestamp: string; // ISO string
   isAnonymous: boolean;
   neighborhood: string;
+  note?: string;
+  citizenNotes?: string[];
   corroboratingReports?: number;
   evidence?: IncidentEvidence;
   h3CellId?: string;

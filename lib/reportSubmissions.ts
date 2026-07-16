@@ -24,6 +24,7 @@ import {
   checkStoredSensorSupport,
   checkStoredSatelliteSupport,
   determineTier,
+  getStoredSatelliteAnomaly,
   tierPromotionReason,
 } from "@/lib/supportEvidence";
 
@@ -58,6 +59,7 @@ interface StoredReport {
     lat?: string;
     lng?: string;
   };
+  note?: string;
   photoUrl?: string;
   validation?: IncidentEvidence;
 }
@@ -216,6 +218,10 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       const reportWithPhoto = hazardReports.find((r) => !!r.data.photoUrl);
       const bestPhotoUrl = reportWithPhoto ? reportWithPhoto.data.photoUrl : (primaryReport.photoUrl ?? "");
       const promotionReason = tierPromotionReason(tier, hazardReports.length);
+      const citizenNotes = hazardReports
+        .map((report) => report.data.note?.trim())
+        .filter((note): note is string => !!note)
+        .filter((note, index, notes) => notes.indexOf(note) === index);
 
       // Pull the strongest *real* sensor/satellite reading from anywhere in
       // the cluster — same "any report, not just primary" reasoning as the
@@ -232,13 +238,7 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
         const satellite = r.data.validation?.satellite;
         if (!checkStoredSatelliteSupport(satellite)) return max;
         if (!satellite) return max;
-        const weight =
-          satellite.hazardWeight ??
-          satellite.anomalyScore ??
-          Math.max(
-            satellite.fireDustSmokeWeight ?? 0,
-            satellite.industrialTrafficWeight ?? 0,
-          );
+        const weight = getStoredSatelliteAnomaly(satellite);
         return weight > max ? weight : max;
       }, -Infinity);
 
@@ -320,6 +320,8 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
         h3CellId,
         hazardLabel: primaryReport.hazardLabel ?? `Citizen ${hazardType} cluster`,
         linkedReportIds: hazardReports.map((report) => report.id),
+        note: primaryReport.note?.trim() || citizenNotes[0] || "",
+        citizenNotes,
         location: primaryReport.location ?? {
           label: "Citizen report cluster",
           lat: "28.6264",

@@ -60,7 +60,7 @@ export default function HeroSection() {
     return resolvedDate.toDateString() === today.toDateString();
   }).length;
 
-  const avgResponse = "-";
+  const avgResponse = "—";
 
   const liveStats = [
     {

@@ -26,7 +26,7 @@ export const commandStats = [
   {
     label: "Active incidents",
     value: 0,
-    detail: "Across Delhi NCR",
+    detail: "Across Delhi",
   },
   {
     label: "Critical",

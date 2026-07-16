@@ -1,7 +1,6 @@
 import "server-only";
 
-import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
-import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import type { NearbyStationReading } from "@/lib/cpcbSensor";
 import { fetchAllStationReadings, getNearestStationReading, getPrimaryPollutant } from "@/lib/cpcbSensor";
 import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
@@ -11,6 +10,8 @@ import { isInOperationalRegion } from "@/lib/operationalRegion";
 import { getH3CellId, getSeverity } from "@/lib/reportSubmissions";
 import {
   SENSOR_PROXIMITY_KM,
+  SENSOR_EXTREME_DELTA_PCT,
+  SENSOR_LOCAL_BASELINE_DELTA_PCT,
   SENSOR_SUPPORT_DELTA_PCT,
   SATELLITE_SUPPORT_SCORE,
   determineTier,
@@ -27,6 +28,9 @@ export type SensorSupportResult = {
   deltaPct: number;
   distanceKm: number | null;
   lastUpdated?: string | null;
+  localBaselineValue?: number | null;
+  localBaselineDeltaPct?: number | null;
+  baselineSource?: "station_history" | "delhi_median";
 };
 
 export type SatelliteSupportResult = {
@@ -45,13 +49,13 @@ export type SatelliteSupportResult = {
  */
 export function getSatelliteHazardWeight(
   hazardType: HazardType,
-  satellite: Pick<SatelliteDataResult, "hazardWeights"> | null | undefined,
+  satellite: Pick<SatelliteDataResult, "aerosolIndex" | "no2"> | null | undefined,
 ): number {
   if (!satellite) return 0;
   if (hazardType === "dust" || hazardType === "fire" || hazardType === "particulate") {
-    return satellite.hazardWeights.fireDustSmoke;
+    return satellite.aerosolIndex.anomalyScore;
   }
-  return satellite.hazardWeights.industrialTraffic;
+  return satellite.no2.anomalyScore;
 }
 
 export function checkSensorSupport(
@@ -155,7 +159,7 @@ export const MONITORED_CELLS: Array<{ label: string; lat: number; lng: number }>
 const HAZARD_TYPES: HazardType[] = ["dust", "industrial", "particulate"];
 const SINGLE_SOURCE_AMBIENT_CONFIDENCE_CAP = 78;
 const AMBIENT_NO_SUPPORT_GRACE_HOURS = 24;
-const MAX_SINGLE_SOURCE_AMBIENT_INCIDENTS = 12;
+const MAX_AMBIENT_INCIDENTS = 20;
 
 // Priority order for picking the single hazardType that drives the map icon
 // color when multiple checks fire. industrial > dust > particulate keeps the
@@ -197,6 +201,156 @@ type CandidateResult = {
   target: AmbientScanTarget;
 };
 
+type SensorBaseline = {
+  pm25: number | null;
+  pm10: number | null;
+  no2: number | null;
+  so2: number | null;
+};
+
+type SensorHistorySample = SensorBaseline & {
+  observedAt: string;
+  sourceUpdatedAt: string | null;
+};
+
+const SENSOR_BASELINE_WINDOW_DAYS = 7;
+const SENSOR_BASELINE_MIN_SAMPLES = 3;
+const SENSOR_BASELINE_MAX_SAMPLES = 56;
+
+function median(values: Array<number | null | undefined>) {
+  const usable = values
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (usable.length === 0) return null;
+  const middle = Math.floor(usable.length / 2);
+  return usable.length % 2 === 0
+    ? (usable[middle - 1] + usable[middle]) / 2
+    : usable[middle];
+}
+
+function buildDelhiMedianBaseline(targets: AmbientScanTarget[]): SensorBaseline {
+  const stations = targets
+    .map((target) => target.station)
+    .filter((station): station is NearbyStationReading => station !== null);
+
+  return {
+    pm25: median(stations.map((station) => station.pm25)),
+    pm10: median(stations.map((station) => station.pm10)),
+    no2: median(stations.map((station) => station.no2)),
+    so2: median(stations.map((station) => station.so2)),
+  };
+}
+
+function parseSensorHistory(value: unknown): SensorHistorySample[] {
+  if (!Array.isArray(value)) return [];
+  const cutoffMs = Date.now() - SENSOR_BASELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+  return value
+    .filter((sample): sample is Record<string, unknown> => !!sample && typeof sample === "object")
+    .map((sample) => ({
+      observedAt: typeof sample.observedAt === "string" ? sample.observedAt : "",
+      sourceUpdatedAt: typeof sample.sourceUpdatedAt === "string" ? sample.sourceUpdatedAt : null,
+      pm25: typeof sample.pm25 === "number" ? sample.pm25 : null,
+      pm10: typeof sample.pm10 === "number" ? sample.pm10 : null,
+      no2: typeof sample.no2 === "number" ? sample.no2 : null,
+      so2: typeof sample.so2 === "number" ? sample.so2 : null,
+    }))
+    .filter((sample) => Date.parse(sample.observedAt) >= cutoffMs);
+}
+
+function historyMedian(samples: SensorHistorySample[], key: keyof SensorBaseline) {
+  const values = samples.map((sample) => sample[key]);
+  return values.filter((value) => value !== null).length >= SENSOR_BASELINE_MIN_SAMPLES
+    ? median(values)
+    : null;
+}
+
+async function getSensorBaselineAndRecord(
+  h3CellId: string,
+  station: NearbyStationReading | null,
+  delhiMedian: SensorBaseline,
+): Promise<{ baseline: SensorBaseline; source: "station_history" | "delhi_median" }> {
+  if (!station) return { baseline: delhiMedian, source: "delhi_median" };
+
+  const baselineRef = adminDb.collection("ambientSensorBaselines").doc(h3CellId);
+  const baselineSnap = await baselineRef.get();
+  const samples = parseSensorHistory(baselineSnap.data()?.samples);
+  const stationBaseline: SensorBaseline = {
+    pm25: historyMedian(samples, "pm25"),
+    pm10: historyMedian(samples, "pm10"),
+    no2: historyMedian(samples, "no2"),
+    so2: historyMedian(samples, "so2"),
+  };
+  const hasStationHistory = Object.values(stationBaseline).some((value) => value !== null);
+  const baseline: SensorBaseline = {
+    pm25: stationBaseline.pm25 ?? delhiMedian.pm25,
+    pm10: stationBaseline.pm10 ?? delhiMedian.pm10,
+    no2: stationBaseline.no2 ?? delhiMedian.no2,
+    so2: stationBaseline.so2 ?? delhiMedian.so2,
+  };
+
+  const alreadyRecorded = samples.some(
+    (sample) =>
+      station.lastUpdated !== null && sample.sourceUpdatedAt === station.lastUpdated,
+  );
+  if (!alreadyRecorded) {
+    const nextSample: SensorHistorySample = {
+      observedAt: new Date().toISOString(),
+      sourceUpdatedAt: station.lastUpdated,
+      pm25: station.pm25,
+      pm10: station.pm10,
+      no2: station.no2,
+      so2: station.so2,
+    };
+    await baselineRef.set(
+      {
+        samples: [...samples, nextSample].slice(-SENSOR_BASELINE_MAX_SAMPLES),
+        stationName: station.stationName,
+        updatedAt: adminServerTimestamp(),
+      },
+      { merge: true },
+    );
+  }
+
+  return {
+    baseline,
+    source: hasStationHistory ? "station_history" : "delhi_median",
+  };
+}
+
+function getBaselineValue(pollutantName: string, baseline: SensorBaseline) {
+  if (pollutantName === "PM10") return baseline.pm10;
+  if (pollutantName === "NO2") return baseline.no2;
+  if (pollutantName === "SO2") return baseline.so2;
+  return baseline.pm25;
+}
+
+function applyAmbientSensorThreshold(
+  sensorResult: SensorSupportResult,
+  baseline: SensorBaseline,
+  baselineSource: "station_history" | "delhi_median",
+): SensorSupportResult {
+  const localBaselineValue = getBaselineValue(sensorResult.pollutantName, baseline);
+  const localBaselineDeltaPct =
+    sensorResult.pollutantValue !== null && localBaselineValue !== null && localBaselineValue > 0
+      ? Math.round(
+          ((sensorResult.pollutantValue - localBaselineValue) / localBaselineValue) * 100,
+        )
+      : null;
+  const extreme = sensorResult.deltaPct >= SENSOR_EXTREME_DELTA_PCT;
+  const locallyElevated =
+    localBaselineDeltaPct !== null &&
+    localBaselineDeltaPct >= SENSOR_LOCAL_BASELINE_DELTA_PCT;
+
+  return {
+    ...sensorResult,
+    supported: sensorResult.supported && (extreme || locallyElevated),
+    baselineSource,
+    localBaselineDeltaPct,
+    localBaselineValue,
+  };
+}
+
 function timestampLikeToMs(value: unknown): number | null {
   if (!value) return null;
   if (value instanceof Date) return value.getTime();
@@ -231,7 +385,7 @@ function ambientCandidateRank(candidate: CandidateResult) {
 }
 
 async function resolveInactiveAmbientDocs(activeH3CellIds: Set<string>) {
-  const snapshot = await getDocs(collection(db!, "incidents"));
+  const snapshot = await adminDb.collection("incidents").get();
   await Promise.all(
     snapshot.docs.map(async (incidentDoc) => {
       if (!incidentDoc.id.startsWith("ambient-")) return;
@@ -239,10 +393,10 @@ async function resolveInactiveAmbientDocs(activeH3CellIds: Set<string>) {
       const data = incidentDoc.data();
       if (activeH3CellIds.has(h3CellId) || data.status === "resolved") return;
 
-      await updateDoc(incidentDoc.ref, {
+      await incidentDoc.ref.update({
         status: "resolved",
         "validation.alertReason":
-          "Automatically hidden because stronger Delhi NCR station hotspots are currently higher priority.",
+          "Automatically hidden because stronger Delhi station hotspots are currently higher priority.",
         "validation.alertTier": false,
         "validation.promotionReason": "Below current ambient top-hotspot cutoff.",
       });
@@ -299,12 +453,9 @@ export async function scanAmbientHotspots(): Promise<{
   scanned: number;
   promoted: AmbientScanResult[];
 }> {
-  if (!isFirebaseConfigured || !db) {
-    return { scanned: 0, promoted: [] };
-  }
-
   const candidates: CandidateResult[] = [];
   const targets = await getAmbientScanTargets();
+  const delhiMedianBaseline = buildDelhiMedianBaseline(targets);
 
   for (const target of targets) {
     const h3CellId = getH3CellId({
@@ -313,10 +464,15 @@ export async function scanAmbientHotspots(): Promise<{
       lng: String(target.lng),
     });
     const station = target.station;
+    const sensorBaseline = await getSensorBaselineAndRecord(
+      h3CellId,
+      station,
+      delhiMedianBaseline,
+    );
 
     // Run all three checks and collect results — we write ONE doc per cell,
     // not one per hazard, to avoid stacking 2-3 markers on the same spot.
-    const incidentRef = doc(db, "incidents", `ambient-${h3CellId}`);
+    const incidentRef = adminDb.collection("incidents").doc(`ambient-${h3CellId}`);
     type CheckResult = {
       hazardType: HazardType;
       sensorResult: ReturnType<typeof checkSensorSupport>;
@@ -328,7 +484,11 @@ export async function scanAmbientHotspots(): Promise<{
     let anySensorSupported = false;
 
     for (const hazardType of HAZARD_TYPES) {
-      const sensorResult = checkSensorSupport(hazardType, station);
+      const sensorResult = applyAmbientSensorThreshold(
+        checkSensorSupport(hazardType, station),
+        sensorBaseline.baseline,
+        sensorBaseline.source,
+      );
       sensorResultsByHazard.set(hazardType, sensorResult);
       if (sensorResult.supported) anySensorSupported = true;
     }
@@ -362,14 +522,14 @@ export async function scanAmbientHotspots(): Promise<{
     // public CPCB feeds can lag or temporarily omit pollutants, so one weak
     // scan should not make the Delhi auto-detection layer collapse.
     if (passedChecks.length === 0) {
-      const existingSnap = await getDoc(incidentRef);
+      const existingSnap = await incidentRef.get();
       const existingData = existingSnap.data();
-      if (!existingSnap.exists() || !existingData || existingData.status === "resolved") {
+      if (!existingSnap.exists || !existingData || existingData.status === "resolved") {
         continue;
       }
 
       if (shouldResolveUnsupportedAmbientIncident(existingData)) {
-        await updateDoc(incidentRef, {
+        await incidentRef.update({
           status: "resolved",
           "validation.alertReason":
             "Automatically resolved because sensor/satellite evidence stayed below detection thresholds across the grace window.",
@@ -377,9 +537,9 @@ export async function scanAmbientHotspots(): Promise<{
           "validation.promotionReason": "Ambient evidence no longer supports this hotspot.",
         });
       } else if (!existingData?.ambientUnsupportedSince) {
-        await updateDoc(incidentRef, {
-          ambientUnsupportedSince: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+        await incidentRef.update({
+          ambientUnsupportedSince: adminServerTimestamp(),
+          updatedAt: adminServerTimestamp(),
           "validation.alertReason":
             "Current scan is below threshold; keeping the auto-detection visible until the next scan confirms it cleared.",
           "validation.promotionReason": "Awaiting one more ambient scan before resolving.",
@@ -396,13 +556,6 @@ export async function scanAmbientHotspots(): Promise<{
 
     const { sensorResult, satelliteResult, tier } = dominant;
     const hazardType = dominant.hazardType;
-
-    // All source categories whose threshold was crossed — shown in the popup
-    // as "Possible sources" so the operator sees the full picture.
-    const possibleSources = passedChecks.map((c) => c.hazardType);
-
-    const source: "sensor" | "satellite" =
-      tier === "satellite_detected" ? "satellite" : "sensor";
 
     // Real weighted fusion, not max(). Ambient detections genuinely have no
     // visual or corroboration evidence — those sources are omitted (null),
@@ -443,23 +596,17 @@ export async function scanAmbientHotspots(): Promise<{
     if (rankDelta !== 0) return rankDelta;
     return b.confidence - a.confidence;
   });
-  const confirmedCandidates = rankedCandidates.filter(
-    (candidate) => candidate.dominant.tier === "sensor_satellite_confirmed",
-  );
-  const singleSourceCandidates = rankedCandidates
-    .filter((candidate) => candidate.dominant.tier !== "sensor_satellite_confirmed")
-    .slice(0, MAX_SINGLE_SOURCE_AMBIENT_INCIDENTS);
-  const topCandidates = [...confirmedCandidates, ...singleSourceCandidates];
+  const topCandidates = rankedCandidates.slice(0, MAX_AMBIENT_INCIDENTS);
   const topCandidateIds = new Set(topCandidates.map((candidate) => candidate.h3CellId));
   await resolveInactiveAmbientDocs(topCandidateIds);
 
   for (const candidate of candidates) {
     if (topCandidateIds.has(candidate.h3CellId)) continue;
-    const incidentRef = doc(db, "incidents", `ambient-${candidate.h3CellId}`);
-    const existingSnap = await getDoc(incidentRef);
+    const incidentRef = adminDb.collection("incidents").doc(`ambient-${candidate.h3CellId}`);
+    const existingSnap = await incidentRef.get();
     const existingData = existingSnap.data();
-    if (existingSnap.exists() && existingData?.status !== "resolved") {
-      await updateDoc(incidentRef, {
+    if (existingSnap.exists && existingData?.status !== "resolved") {
+      await incidentRef.update({
         status: "resolved",
         "validation.alertReason":
           "Automatically hidden because stronger station hotspots are currently higher priority.",
@@ -473,7 +620,7 @@ export async function scanAmbientHotspots(): Promise<{
     const { confidence, dominant, fusion, h3CellId, passedChecks, satellite, target } = candidate;
     const { sensorResult, satelliteResult, tier } = dominant;
     const hazardType = dominant.hazardType;
-    const incidentRef = doc(db, "incidents", `ambient-${h3CellId}`);
+    const incidentRef = adminDb.collection("incidents").doc(`ambient-${h3CellId}`);
     const possibleSources = passedChecks.map((c) => c.hazardType);
     const source: "sensor" | "satellite" =
       tier === "satellite_detected" ? "satellite" : "sensor";
@@ -498,7 +645,7 @@ export async function scanAmbientHotspots(): Promise<{
     // Check if this cell's incident doc already exists so we can preserve
     // its original createdAt timestamp. setDoc with merge:true would
     // overwrite createdAt on every scan, making Age always show "1m".
-    const existingSnap = await getDoc(incidentRef);
+    const existingSnap = await incidentRef.get();
 
     const sharedPayload = {
       aiConfidence: Math.round(confidence),
@@ -523,7 +670,7 @@ export async function scanAmbientHotspots(): Promise<{
       source,
       status: "under_review",
       ambientUnsupportedSince: null,
-      updatedAt: serverTimestamp(),
+      updatedAt: adminServerTimestamp(),
       validation: {
         alertReason: tierPromotionReason(tier, 0),
         alertTier: true,
@@ -563,6 +710,9 @@ export async function scanAmbientHotspots(): Promise<{
           primaryDelta: sensorResult.deltaPct,
           primaryName: sensorResult.pollutantName,
           primaryValue: sensorResult.pollutantValue,
+          localBaselineDeltaPct: sensorResult.localBaselineDeltaPct,
+          localBaselineValue: sensorResult.localBaselineValue,
+          baselineSource: sensorResult.baselineSource,
           distanceKm: sensorResult.distanceKm ?? undefined,
           lastUpdated: sensorResult.lastUpdated ?? undefined,
           source: "CPCB",
@@ -571,14 +721,14 @@ export async function scanAmbientHotspots(): Promise<{
       },
     };
 
-    if (existingSnap.exists()) {
+    if (existingSnap.exists) {
       // Doc already exists — update in place, preserving the original createdAt
       // so the "Age" displayed in the Command Center reflects when pollution
       // was FIRST detected, not when this scan last ran.
-      await updateDoc(incidentRef, sharedPayload);
+      await incidentRef.update(sharedPayload);
     } else {
       // Brand new detection — set createdAt for the first and only time.
-      await setDoc(incidentRef, { ...sharedPayload, createdAt: serverTimestamp() });
+      await incidentRef.set({ ...sharedPayload, createdAt: adminServerTimestamp() });
     }
 
     promoted.push({ cell: target.label, hazardType, tier, h3CellId });

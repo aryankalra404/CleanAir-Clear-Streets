@@ -26,6 +26,7 @@ export interface FirestoreReport {
     lng?: string;
   };
   note?: string;
+  citizenNotes?: string[];
   result?: string;
   status?: IncidentStatus | "submitted" | "classified" | "no_signal";
   source?: string;
@@ -145,6 +146,11 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
   const aiConfidence = hasPollutionSignal(report)
     ? normalizeConfidence(report.geminiClassification?.confidence, report.aiConfidence ?? 0)
     : 0;
+  const note = report.note?.trim();
+  const citizenNotes = [
+    ...(note ? [note] : []),
+    ...(report.citizenNotes ?? []).map((item) => item.trim()).filter(Boolean),
+  ].filter((item, index, notes) => notes.indexOf(item) === index);
   const incident: Incident = {
     id: `firestore-${id}`,
     aiConfidence,
@@ -156,6 +162,8 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     latitude: Number(report.location?.lat ?? 28.6264),
     longitude: Number(report.location?.lng ?? 77.3192),
     neighborhood: report.location?.label ?? "Citizen report",
+    note,
+    citizenNotes,
     photoUrl: report.photoUrl ?? "",
     severity,
     source: report.source === "sensor" ? "sensor" : report.source === "satellite" ? "satellite" : "citizen",

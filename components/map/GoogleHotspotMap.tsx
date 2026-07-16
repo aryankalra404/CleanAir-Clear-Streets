@@ -587,7 +587,7 @@ export default function GoogleHotspotMap({
               <span>
                 {status === "error"
                   ? "Check the Maps JavaScript API key and browser restrictions."
-                  : "Plotting Delhi NCR hotspot markers."}
+                  : "Plotting Delhi hotspot markers."}
               </span>
             </div>
           )}

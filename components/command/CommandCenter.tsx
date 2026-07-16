@@ -25,7 +25,9 @@ import { TIER_LABELS, priorityRank } from "@/lib/supportEvidence";
 import { latLngToCell } from "h3-js";
 
 type CommandTab = "priority" | "citizen_reported" | "auto_detected";
+type Translator = (key: string) => string;
 const SINGLE_SOURCE_AUTO_DISPLAY_CAP = 78;
+const AUTO_DETECTED_DISPLAY_LIMIT = 20;
 
 const commandTabs: Array<{ id: CommandTab; label: string }> = [
   { id: "priority", label: "Priority" },
@@ -33,7 +35,7 @@ const commandTabs: Array<{ id: CommandTab; label: string }> = [
   { id: "auto_detected", label: "Automatically Detected" },
 ];
 
-function getIncidentHazardLabel(incident: Incident, t: (key: string) => string) {
+function getIncidentHazardLabel(incident: Incident, t: Translator) {
   const isAutoDetected = (incident.evidence?.citizenSignal?.reportCount ?? 0) === 0;
 
   if (isAutoDetected) {
@@ -89,7 +91,7 @@ function compareCitizenBacked(a: Incident, b: Incident) {
   return b.aiConfidence - a.aiConfidence;
 }
 
-function translateFreshness(freshness: string, t: (key: string) => string) {
+function translateFreshness(freshness: string, t: Translator) {
   const normalized = freshness.toLowerCase();
   if (normalized === "fresh") return t("freshness_fresh");
   if (normalized === "stale") return t("freshness_stale");
@@ -98,7 +100,7 @@ function translateFreshness(freshness: string, t: (key: string) => string) {
 
 function getCoverageLabel(
   coverage: { level: string; nearestSensorKm: number; label: string },
-  t: (key: string) => string,
+  t: Translator,
 ) {
   if (coverage.nearestSensorKm <= 0.05) {
     return t("coverage_at_nearest_station").replace(
@@ -111,10 +113,40 @@ function getCoverageLabel(
   return t("coverage_nearby_sensor");
 }
 
-function getAlertReasonLabel(isAutoDetected: boolean, t: (key: string) => string) {
+function getAlertReasonLabel(isAutoDetected: boolean, t: Translator) {
   return isAutoDetected
     ? t("alert_reason_auto_no_citizen")
     : t("alert_reason_citizen_promoted");
+}
+
+function getIncidentNotes(incident: Incident) {
+  return [
+    incident.note,
+    ...(incident.citizenNotes ?? []),
+  ]
+    .map((note) => note?.trim())
+    .filter((note): note is string => !!note)
+    .filter((note, index, notes) => notes.indexOf(note) === index);
+}
+
+function enrichIncidentWithClusterNotes(incident: Incident, reports: Incident[]) {
+  const linkedReportIds = new Set(incident.linkedReportIds ?? []);
+  const clusterNotes = reports.flatMap((report) => {
+    const rawReportId = report.id.replace("firestore-", "");
+    const linkedMatch = linkedReportIds.has(rawReportId);
+    const clusterMatch =
+      !linkedReportIds.size &&
+      report.h3CellId &&
+      incident.h3CellId &&
+      report.h3CellId === incident.h3CellId &&
+      report.hazardType === incident.hazardType;
+
+    return linkedMatch || clusterMatch ? getIncidentNotes(report) : [];
+  });
+  const citizenNotes = [...getIncidentNotes(incident), ...clusterNotes]
+    .filter((note, index, notes) => notes.indexOf(note) === index);
+
+  return citizenNotes.length ? { ...incident, citizenNotes, note: incident.note ?? citizenNotes[0] } : incident;
 }
 
 export default function CommandCenter() {
@@ -137,7 +169,10 @@ export default function CommandCenter() {
     setAmbientScanState("scanning");
     try {
       const response = await fetch(`/api/scan-ambient${force ? "?force=1" : ""}`);
-      if (!response.ok) throw new Error(`scan-ambient responded ${response.status}`);
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(errorPayload?.error ?? `scan-ambient responded ${response.status}`);
+      }
       const result = await response.json() as { promoted?: unknown[]; scanned?: number };
       if (notify) {
         showToast(
@@ -214,6 +249,14 @@ export default function CommandCenter() {
     );
   }, []);
 
+  const enrichedAlertIncidents = useMemo(
+    () =>
+      liveAlertIncidents.map((incident) =>
+        enrichIncidentWithClusterNotes(incident, liveReports),
+      ),
+    [liveAlertIncidents, liveReports],
+  );
+
   // Kick off the sensor/satellite-only ambient scan (no citizen report
   // needed). Writes land in the "incidents" collection and flow back through
   // the onSnapshot listener above like any other promoted incident. The route
@@ -245,15 +288,16 @@ export default function CommandCenter() {
   // most-recently-updated first.
   const priorityIncidents = useMemo(
     () => {
-      const citizenBacked = liveAlertIncidents
+      const citizenBacked = enrichedAlertIncidents
         .filter((incident) => getCitizenReportCount(incident) > 0)
         .sort(compareCitizenBacked);
-      const autoDetected = liveAlertIncidents
+      const autoDetected = enrichedAlertIncidents
         .filter((incident) => getCitizenReportCount(incident) === 0)
-        .sort(compareAutoDetected);
+        .sort(compareAutoDetected)
+        .slice(0, AUTO_DETECTED_DISPLAY_LIMIT);
       return [...citizenBacked, ...autoDetected];
     },
-    [liveAlertIncidents],
+    [enrichedAlertIncidents],
   );
 
   // Citizen Reported: any promoted incident that had at least one citizen
@@ -263,10 +307,10 @@ export default function CommandCenter() {
   // priority channel regardless of what else confirmed it.
   const citizenReportedIncidents = useMemo(
     () =>
-      liveAlertIncidents.filter(
+      enrichedAlertIncidents.filter(
         (incident) => (incident.evidence?.citizenSignal?.reportCount ?? 0) > 0,
       ),
-    [liveAlertIncidents],
+    [enrichedAlertIncidents],
   );
 
   // Automatically Detected: promoted incidents with zero citizen reports —
@@ -274,15 +318,18 @@ export default function CommandCenter() {
   // and shouldn't be mixed into the citizen-corroborated channel.
   const autoDetectedIncidents = useMemo(
     () =>
-      liveAlertIncidents
+      enrichedAlertIncidents
         .filter((incident) => getCitizenReportCount(incident) === 0)
-        .sort(compareAutoDetected),
-    [liveAlertIncidents],
+        .sort(compareAutoDetected)
+        .slice(0, AUTO_DETECTED_DISPLAY_LIMIT),
+    [enrichedAlertIncidents],
   );
 
-  const incidents = liveAlertIncidents;
+  const incidents = enrichedAlertIncidents;
 
-  const mapOverlaySignals = incomingSignals;
+  // Keep the automatic-detection view operationally focused: citizen signals
+  // belong to the other two tabs and should not inflate this map's marker count.
+  const mapOverlaySignals = activeTab === "auto_detected" ? [] : incomingSignals;
 
   const filteredIncidents = useMemo(() => {
     switch (activeTab) {
@@ -302,7 +349,7 @@ export default function CommandCenter() {
     (() => {
       const allIncidents = [...incidents, ...incomingSignals];
       const selected = allIncidents.find((incident) => incident.id === selectedId);
-      const newestLiveIncident = liveAlertIncidents[0];
+      const newestLiveIncident = enrichedAlertIncidents[0];
       return selected ?? newestLiveIncident ?? null;
     })();
   const selectedIncidentId = selectedIncident?.id ?? null;
@@ -489,7 +536,7 @@ export default function CommandCenter() {
   );
 }
 
-function IncomingSignals({ signals, t }: { signals: Incident[], t: any }) {
+function IncomingSignals({ signals, t }: { signals: Incident[], t: Translator }) {
   const groupedSignals = useMemo(() => {
     const groupMap = new Map<string, { primary: Incident; count: number }>();
     signals.forEach((signal) => {
@@ -519,7 +566,6 @@ function IncomingSignals({ signals, t }: { signals: Incident[], t: any }) {
         <ul>
           {groupedSignals.slice(0, 3).map((group) => {
             const signal = group.primary;
-            const evidence = signal.evidence ?? null;
             return (
               <li key={signal.id}>
                 <strong>{signal.neighborhood}</strong>
@@ -537,8 +583,9 @@ function IncomingSignals({ signals, t }: { signals: Incident[], t: any }) {
   );
 }
 
-function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onResolved: () => void, t: any }) {
+function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onResolved: () => void, t: Translator }) {
   const [showResolveModal, setShowResolveModal] = useState(false);
+  const [showNotesModal, setShowNotesModal] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const [resolveError, setResolveError] = useState("");
   const [isDispatching, setIsDispatching] = useState(false);
@@ -567,15 +614,6 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
     setIsResolving(true);
     setResolveError("");
     try {
-      const incidentRef = doc(db, incident.id.replace("firestore-", "incidents/").includes("incidents/") ? incident.id.replace("firestore-", "incidents/") : `reports/${incident.id.replace("firestore-", "")}`);
-      // Note: for safety, since incidents can be in "incidents" or "reports" collection
-      const isPromoted = incident.id.includes("incidents/"); // Wait, reportToIncident sets id to `firestore-${id}`... Let me check how it gets promoted
-      // Actually, if it's promoted, it's in the incidents collection? But the hook reads from `reports` for incoming and `incidents` for alerts.
-      // Wait, let's just write to both or figure out which collection it belongs to.
-      // If the incident has `linkedReportIds` it might be from the `incidents` collection, but wait, reportToIncident takes `id` directly!
-      // Let's use `collectionName` logic: if incident.corroboratingReports > 1 or something? 
-      // Actually, `liveAlertIncidents` comes from "incidents" collection, `liveReports` comes from "reports".
-      // Let's just pass `isPromoted` or infer from `incident.evidence?.alertTier` which means it's in "incidents" collection.
       const collectionName = incident.evidence?.alertTier ? "incidents" : "reports";
       const docId = incident.id.replace("firestore-", "");
       await updateDoc(doc(db, collectionName, docId), {
@@ -633,6 +671,7 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
     : `${satelliteFreshness} · ${fallbackEvidence.satellite.lastPassTime}`;
   const recommendedAction = t(getRecommendedActionKey(incident)) || getRecommendedAction(incident);
   const coverageLabel = getCoverageLabel(fallbackEvidence.coverage, t);
+  const citizenNotes = getIncidentNotes(incident);
 
   return (
     <aside className="incident-detail-panel">
@@ -658,6 +697,13 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
           <span>{t("incident_nearby_reports").replace("{count}", String(incident.corroboratingReports ?? 0))}</span>
           <span>{t("incident_health_risk").replace("{risk}", t("severity_" + incident.healthRisk.toLowerCase()) || incident.healthRisk)}</span>
         </div>
+        {citizenNotes.length > 0 && (
+          <div className="evidence-note-action">
+            <button onClick={() => setShowNotesModal(true)} type="button">
+              {t("command_detail_view_notes").replace("{count}", citizenNotes.length.toString())}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="ai-analysis-card">
@@ -782,11 +828,53 @@ function IncidentDetail({ incident, onResolved, t }: { incident: Incident; onRes
           </div>
         </div>
       )}
+      {showNotesModal && (
+        <CitizenNotesModal
+          incident={incident}
+          notes={citizenNotes}
+          onClose={() => setShowNotesModal(false)}
+          t={t}
+        />
+      )}
     </aside>
   );
 }
 
-function EmptyIncidentDetail({ t }: { t: any }) {
+function CitizenNotesModal({
+  incident,
+  notes,
+  onClose,
+  t,
+}: {
+  incident: Incident;
+  notes: string[];
+  onClose: () => void;
+  t: Translator;
+}) {
+  return (
+    <div className="citizen-notes-modal-backdrop" role="presentation">
+      <div className="citizen-notes-modal" role="dialog" aria-modal="true" aria-labelledby="citizen-notes-title">
+        <div className="citizen-notes-header">
+          <div>
+            <p>{t("command_detail_citizen_notes")}</p>
+            <h3 id="citizen-notes-title">{incident.neighborhood}</h3>
+          </div>
+          <button aria-label={t("common_close")} onClick={onClose} type="button">{"\u00d7"}</button>
+        </div>
+        <div className="citizen-notes-list">
+          {notes.map((note, index) => (
+            <article className="citizen-note" key={`${note}-${index}`}>
+              <span>{t("command_detail_note_number").replace("{number}", String(index + 1))}</span>
+              <p>{note}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyIncidentDetail({ t }: { t: Translator }) {
   return (
     <aside className="incident-detail-panel">
       <div className="command-panel-header">
@@ -803,8 +891,10 @@ function EmptyIncidentDetail({ t }: { t: any }) {
   );
 }
 
-function UnverifiedSignalDetail({ incident, t }: { incident: Incident, t: any }) {
+function UnverifiedSignalDetail({ incident, t }: { incident: Incident, t: Translator }) {
   const reports = incident.corroboratingReports ?? 1;
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const citizenNotes = getIncidentNotes(incident);
   return (
     <aside className="incident-detail-panel">
       <div className="command-panel-header">
@@ -821,6 +911,21 @@ function UnverifiedSignalDetail({ incident, t }: { incident: Incident, t: any })
             .replace("{count}", reports.toString())}
         </span>
       </div>
+      {citizenNotes.length > 0 && (
+        <div className="evidence-note-action unverified">
+          <button onClick={() => setShowNotesModal(true)} type="button">
+            {t("command_detail_view_notes").replace("{count}", citizenNotes.length.toString())}
+          </button>
+        </div>
+      )}
+      {showNotesModal && (
+        <CitizenNotesModal
+          incident={incident}
+          notes={citizenNotes}
+          onClose={() => setShowNotesModal(false)}
+          t={t}
+        />
+      )}
     </aside>
   );
 }

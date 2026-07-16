@@ -1165,8 +1165,10 @@ a {
 }
 
 .incident-detail-panel {
+  position: relative;
   grid-area: detail;
   overflow: hidden;
+  z-index: 2;
 }
 
 .command-panel-header {
@@ -1741,6 +1743,140 @@ a {
   font-size: 0.82rem;
   font-weight: 750;
   text-transform: capitalize;
+}
+
+.evidence-note-action {
+  border-top: 1px solid var(--line);
+  padding: 11px 12px 12px;
+}
+
+.evidence-note-action.unverified {
+  margin: 0 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+}
+
+.evidence-note-action button {
+  display: inline-flex;
+  position: relative;
+  z-index: 3;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(17, 124, 114, 0.26);
+  border-radius: var(--radius);
+  background: #e8fffa;
+  padding: 8px 12px;
+  color: var(--teal-dark);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.evidence-note-action button:hover {
+  border-color: rgba(17, 124, 114, 0.52);
+  background: #d8fbf3;
+}
+
+.evidence-note-action button:focus-visible {
+  outline: 3px solid rgba(20, 184, 166, 0.22);
+  outline-offset: 2px;
+}
+
+.citizen-notes-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 24, 40, 0.52);
+  padding: 18px;
+  backdrop-filter: blur(4px);
+}
+
+.citizen-notes-modal {
+  width: min(520px, 100%);
+  max-height: min(620px, 88vh);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+
+.citizen-notes-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 18px;
+}
+
+.citizen-notes-header p {
+  color: var(--teal-dark);
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.citizen-notes-header h3 {
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.citizen-notes-header button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--muted);
+  font: inherit;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.citizen-notes-list {
+  display: grid;
+  max-height: 430px;
+  gap: 10px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.citizen-note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.citizen-note span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.citizen-note p {
+  margin-top: 6px;
+  color: #344054;
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.55;
 }
 
 .ai-analysis-card,
