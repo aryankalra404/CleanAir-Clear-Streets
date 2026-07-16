@@ -178,7 +178,6 @@ type AmbientScanTarget = {
   lat: number;
   lng: number;
   station: NearbyStationReading | null;
-  allowSatelliteOnly: boolean;
 };
 
 type CandidateResult = {
@@ -216,6 +215,7 @@ type SensorHistorySample = SensorBaseline & {
 const SENSOR_BASELINE_WINDOW_DAYS = 7;
 const SENSOR_BASELINE_MIN_SAMPLES = 3;
 const SENSOR_BASELINE_MAX_SAMPLES = 56;
+const SATELLITE_SCAN_CONCURRENCY = 4;
 
 function median(values: Array<number | null | undefined>) {
   const usable = values
@@ -380,7 +380,7 @@ function meetsAmbientSensorThreshold(
 
 function ambientCandidateRank(candidate: CandidateResult) {
   if (candidate.dominant.tier === "sensor_satellite_confirmed") return 0;
-  if (candidate.dominant.tier === "sensor_detected") return 1;
+  if (candidate.dominant.tier === "satellite_detected") return 1;
   return 2;
 }
 
@@ -412,7 +412,6 @@ async function getAmbientScanTargets(): Promise<AmbientScanTarget[]> {
       lat: station.lat,
       lng: station.lng,
       station,
-      allowSatelliteOnly: false,
     }));
 
   const targetsByCell = new Map<string, AmbientScanTarget>();
@@ -441,12 +440,41 @@ async function getAmbientScanTargets(): Promise<AmbientScanTarget[]> {
         lat: cell.lat,
         lng: cell.lng,
         station: await getNearestStationReading(cell.lat, cell.lng).catch(() => null),
-        allowSatelliteOnly: true,
       });
     }
   }
 
   return [...targetsByCell.values()];
+}
+
+function getTargetH3CellId(target: AmbientScanTarget) {
+  return getH3CellId({
+    label: target.label,
+    lat: String(target.lat),
+    lng: String(target.lng),
+  });
+}
+
+async function fetchSatelliteForTargets(targets: AmbientScanTarget[]) {
+  const results = new Map<string, SatelliteDataResult | null>();
+  let nextIndex = 0;
+  const workerCount = Math.min(SATELLITE_SCAN_CONCURRENCY, targets.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < targets.length) {
+        const targetIndex = nextIndex;
+        nextIndex += 1;
+        const target = targets[targetIndex];
+        const satellite = await getSatelliteDataForPoint(target.lat, target.lng).catch(
+          () => null,
+        );
+        results.set(getTargetH3CellId(target), satellite);
+      }
+    }),
+  );
+
+  return results;
 }
 
 export async function scanAmbientHotspots(): Promise<{
@@ -456,13 +484,10 @@ export async function scanAmbientHotspots(): Promise<{
   const candidates: CandidateResult[] = [];
   const targets = await getAmbientScanTargets();
   const delhiMedianBaseline = buildDelhiMedianBaseline(targets);
+  const satelliteByCell = await fetchSatelliteForTargets(targets);
 
   for (const target of targets) {
-    const h3CellId = getH3CellId({
-      label: target.label,
-      lat: String(target.lat),
-      lng: String(target.lng),
-    });
+    const h3CellId = getTargetH3CellId(target);
     const station = target.station;
     const sensorBaseline = await getSensorBaselineAndRecord(
       h3CellId,
@@ -481,7 +506,6 @@ export async function scanAmbientHotspots(): Promise<{
     };
     const passedChecks: CheckResult[] = [];
     const sensorResultsByHazard = new Map<HazardType, ReturnType<typeof checkSensorSupport>>();
-    let anySensorSupported = false;
 
     for (const hazardType of HAZARD_TYPES) {
       const sensorResult = applyAmbientSensorThreshold(
@@ -490,13 +514,13 @@ export async function scanAmbientHotspots(): Promise<{
         sensorBaseline.source,
       );
       sensorResultsByHazard.set(hazardType, sensorResult);
-      if (sensorResult.supported) anySensorSupported = true;
     }
 
-    const shouldFetchSatellite = anySensorSupported || target.allowSatelliteOnly;
-    const satellite = shouldFetchSatellite
-      ? await getSatelliteDataForPoint(target.lat, target.lng).catch(() => null)
-      : null;
+    // Satellite is an independent detection path, not merely a sensor
+    // corroborator. Evaluate every Delhi target so a valid Sentinel-5P
+    // anomaly can surface even when the nearby CPCB reading is below its
+    // promotion threshold. Earth Engine responses remain cached per H3 cell.
+    const satellite = satelliteByCell.get(h3CellId) ?? null;
 
     for (const hazardType of HAZARD_TYPES) {
       const sensorResult = sensorResultsByHazard.get(hazardType) ??

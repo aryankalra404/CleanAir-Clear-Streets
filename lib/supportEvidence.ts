@@ -167,8 +167,8 @@ export const TIER_RANK: Record<PromotionTier, number> = {
   crowd_verified: 1,
   citizen_sensor_confirmed: 2,
   citizen_satellite_confirmed: 3,
-  sensor_detected: 4,
-  satellite_detected: 5,
+  satellite_detected: 4,
+  sensor_detected: 5,
 };
 
 // Report count at/above which a crowd_verified incident is treated as
@@ -185,8 +185,8 @@ export const CROWD_OVERWHELMING_THRESHOLD = 5;
  *   3. citizen_sensor_confirmed
  *   4. citizen_satellite_confirmed
  *   5. crowd_verified, reportCount < CROWD_OVERWHELMING_THRESHOLD (baseline 3-4 reports)
- *   6. sensor_detected
- *   7. satellite_detected
+ *   6. satellite_detected
+ *   7. sensor_detected
  *
  * Lower number = shown first. Incidents without a tier (shouldn't normally
  * reach the Priority tab, since it only shows promoted incidents) sort last.
@@ -205,9 +205,9 @@ export function priorityRank(tier: PromotionTier | null | undefined, reportCount
       return 2;
     case "citizen_satellite_confirmed":
       return 3;
-    case "sensor_detected":
-      return 5;
     case "satellite_detected":
+      return 5;
+    case "sensor_detected":
       return 6;
     default:
       return 99;

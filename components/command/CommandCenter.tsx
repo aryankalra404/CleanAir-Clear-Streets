@@ -282,8 +282,8 @@ export default function CommandCenter() {
   //   3. citizen + sensor confirmed
   //   4. citizen + satellite confirmed
   //   5. crowd-verified, baseline (3-4 reports)
-  //   6. sensor-detected only
-  //   7. satellite-detected only
+  //   6. satellite-detected only
+  //   7. sensor-detected only
   // Ties within the same rank fall back to report count (more first), then
   // most-recently-updated first.
   const priorityIncidents = useMemo(
