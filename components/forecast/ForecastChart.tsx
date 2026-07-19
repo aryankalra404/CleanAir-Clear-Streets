@@ -9,9 +9,6 @@ import {
   Tooltip,
   ReferenceLine,
   ResponsiveContainer,
-  Legend,
-  Area,
-  AreaChart,
 } from "recharts";
 import type { ForecastResult, SensorReading } from "@/lib/forecastEngine";
 import { getAQIInfo } from "@/lib/forecastEngine";
@@ -122,8 +119,9 @@ export default function ForecastChart({ forecast, history }: ForecastChartProps)
 
   return (
     <div className="forecast-chart-wrapper">
-      <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={points} margin={{ top: 12, right: 16, left: -8, bottom: 0 }}>
+      <div className="forecast-chart-canvas">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={points} margin={{ top: 12, right: 16, left: -8, bottom: 0 }}>
           <CartesianGrid
             strokeDasharray="3 3"
             stroke="rgba(216,225,218,0.5)"
@@ -185,8 +183,9 @@ export default function ForecastChart({ forecast, history }: ForecastChartProps)
             activeDot={{ r: 5, fill: "#6366f1" }}
             connectNulls
           />
-        </LineChart>
-      </ResponsiveContainer>
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
 
       {/* Legend */}
       <div className="forecast-chart-legend">

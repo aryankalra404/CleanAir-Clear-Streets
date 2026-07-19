@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import HotspotPreview from "@/components/landing/HotspotPreview";
 import { collection, limit, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
@@ -13,8 +13,29 @@ import {
 import type { Incident } from "@/lib/types";
 import { useT } from "@/lib/languageContext";
 
+const DESKTOP_HERO_QUERY = "(min-width: 821px)";
+
+function subscribeToDesktopViewport(onStoreChange: () => void) {
+  const mediaQuery = window.matchMedia(DESKTOP_HERO_QUERY);
+  mediaQuery.addEventListener("change", onStoreChange);
+  return () => mediaQuery.removeEventListener("change", onStoreChange);
+}
+
+function getDesktopViewportSnapshot() {
+  return window.matchMedia(DESKTOP_HERO_QUERY).matches;
+}
+
+function getServerDesktopViewportSnapshot() {
+  return false;
+}
+
 export default function HeroSection() {
   const t = useT();
+  const showHotspotPreview = useSyncExternalStore(
+    subscribeToDesktopViewport,
+    getDesktopViewportSnapshot,
+    getServerDesktopViewportSnapshot,
+  );
   const [liveIncidents, setLiveIncidents] = useState<Incident[]>([]);
   const [citizenReports, setCitizenReports] = useState<Incident[]>([]);
 
@@ -29,7 +50,7 @@ export default function HeroSection() {
   }, []);
 
   useEffect(() => {
-    if (!isFirebaseConfigured || !db) return;
+    if (!showHotspotPreview || !isFirebaseConfigured || !db) return;
     const reportsQuery = query(
       collection(db, "reports"),
       orderBy("createdAt", "desc"),
@@ -48,7 +69,7 @@ export default function HeroSection() {
           .filter((incident) => incident.status !== "resolved"),
       );
     });
-  }, []);
+  }, [showHotspotPreview]);
 
   const activeIncidents = liveIncidents.filter((i) => i.status !== "resolved");
   const criticalCount = activeIncidents.filter((i) => i.severity === "critical").length;
@@ -115,9 +136,12 @@ export default function HeroSection() {
         </div>
       </div>
 
-      <HotspotPreview 
-        incidents={citizenReports.slice(0, 4)}
-      />
+      {showHotspotPreview && (
+        <HotspotPreview incidents={citizenReports.slice(0, 4)} />
+      )}
+      {!showHotspotPreview && (
+        <div className="hotspot-panel-placeholder" aria-hidden="true" />
+      )}
     </div>
   );
 }

@@ -11,7 +11,7 @@ import { useT } from "@/lib/languageContext";
 export default function DashboardPage() {
   const t = useT();
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(auth));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -19,7 +19,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!auth) {
-      setLoading(false);
       return;
     }
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -36,7 +35,7 @@ export default function DashboardPage() {
     setIsSigningIn(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
-    } catch (err: any) {
+    } catch {
       setError("Invalid email or password.");
     } finally {
       setIsSigningIn(false);
@@ -50,7 +49,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <main className="app-page-shell">
-        <div className="app-page-container" style={{ zIndex: 100 }}>
+        <div className="app-page-container dashboard-page-nav-container" style={{ zIndex: 100 }}>
           <Navbar />
         </div>
         <div className="app-page-container app-page-content" style={{ display: "flex", justifyContent: "center", padding: "100px 0" }}>
@@ -63,7 +62,7 @@ export default function DashboardPage() {
   if (!user) {
     return (
       <main className="app-page-shell">
-        <div className="app-page-container" style={{ zIndex: 100 }}>
+        <div className="app-page-container dashboard-page-nav-container" style={{ zIndex: 100 }}>
           <Navbar />
         </div>
         <div className="app-page-container app-page-content" style={{ display: "flex", justifyContent: "center", padding: "80px 0" }}>
@@ -104,10 +103,10 @@ export default function DashboardPage() {
 
   return (
     <main className="app-page-shell">
-      <div className="app-page-container" style={{ zIndex: 100 }}>
+      <div className="app-page-container dashboard-page-nav-container" style={{ zIndex: 100 }}>
         <Navbar />
       </div>
-      <div className="app-page-container app-page-content">
+      <div className="app-page-container app-page-content dashboard-page-content">
         <div className="command-hero-row">
           <div className="command-header">
             <p className="eyebrow">{t("dashboard_login_subtitle")}</p>
@@ -117,10 +116,10 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "16px" }}>
-            <button 
-              onClick={handleSignOut} 
-              style={{ background: "transparent", border: "none", color: "var(--muted)", textDecoration: "underline", cursor: "pointer", fontSize: "0.9rem", fontWeight: 600, padding: 0 }}
+          <div className="command-hero-actions">
+            <button
+              className="dashboard-signout"
+              onClick={handleSignOut}
             >
               {t("nav_sign_out")}
             </button>

@@ -98,7 +98,7 @@ export default function ReportLocationPicker({
   const valueRef = useRef(value);
   const [mapEnabled, setMapEnabled] = useState(false);
   const [status, setStatus] = useState<PickerStatus>("idle");
-  const [helperText, setHelperText] = useState("Use GPS, enter details manually, or open the map picker.");
+  const [helperText, setHelperText] = useState("");
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -343,7 +343,9 @@ export default function ReportLocationPicker({
       )}
 
       <div className="location-picker-meta">
-        <small>{t("report_form_use_gps")}</small>
+        <small aria-live="polite">
+          {helperText || t("report_form_use_gps")}
+        </small>
         <span>
           {value.lat.toString().substring(0, 9)}, {value.lng.toString().substring(0, 9)}
         </span>

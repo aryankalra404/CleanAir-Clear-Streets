@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { formatStatus } from "@/components/command/commandData";
 import { latLngToCell } from "h3-js";
@@ -40,6 +40,22 @@ const severityRadius: Record<Severity, number> = {
   medium: 500,
   low: 450,
 };
+
+const COMPACT_MAP_QUERY = "(max-width: 520px)";
+
+function subscribeToCompactMapViewport(onStoreChange: () => void) {
+  const mediaQuery = window.matchMedia(COMPACT_MAP_QUERY);
+  mediaQuery.addEventListener("change", onStoreChange);
+  return () => mediaQuery.removeEventListener("change", onStoreChange);
+}
+
+function getCompactMapViewportSnapshot() {
+  return window.matchMedia(COMPACT_MAP_QUERY).matches;
+}
+
+function getServerCompactMapViewportSnapshot() {
+  return false;
+}
 
 type GoogleHotspotMapProps = {
   incidents?: Incident[];
@@ -194,6 +210,11 @@ export default function GoogleHotspotMap({
   showSidebar = true,
 }: GoogleHotspotMapProps = {}) {
   const t = useT();
+  const isCompactMapViewport = useSyncExternalStore(
+    subscribeToCompactMapViewport,
+    getCompactMapViewportSnapshot,
+    getServerCompactMapViewportSnapshot,
+  );
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRefs = useRef<Record<string, GoogleMapMarker>>({});
@@ -299,10 +320,10 @@ export default function GoogleHotspotMap({
     () => {
       const selected = incidents.find((incident) => incident.id === selectedId);
       if (isControlled) return selected ?? null;
-      const newestLiveIncident = liveReports[0];
+      const newestLiveIncident = isCompactMapViewport ? null : liveReports[0];
       return selected ?? newestLiveIncident ?? null;
     },
-    [incidents, isControlled, liveReports, selectedId],
+    [incidents, isCompactMapViewport, isControlled, liveReports, selectedId],
   );
   const selectedIncidentId = selectedIncident?.id ?? null;
 
@@ -330,7 +351,7 @@ export default function GoogleHotspotMap({
           controlSize: 28,
           disableDefaultUI: true,
           fullscreenControl: mode === "public",
-          mapTypeControl: mode === "public",
+          mapTypeControl: mode === "public" && !isCompactMapViewport,
           mapTypeControlOptions: {
             position: maps.ControlPosition.TOP_RIGHT,
           },
@@ -344,7 +365,9 @@ export default function GoogleHotspotMap({
         });
 
         mapRef.current = map;
-        infoWindowRef.current = new maps.InfoWindow();
+        infoWindowRef.current = new maps.InfoWindow({
+          maxWidth: isCompactMapViewport ? 248 : 360,
+        });
         window.setTimeout(() => {
           if (!cancelled) {
             maps.event.trigger(map, "resize");
@@ -361,7 +384,7 @@ export default function GoogleHotspotMap({
     return () => {
       cancelled = true;
     };
-  }, [mode]);
+  }, [isCompactMapViewport, mode]);
 
   useEffect(() => {
     if (status !== "ready" || !mapNodeRef.current || !mapRef.current || !window.google?.maps) {
@@ -550,7 +573,7 @@ export default function GoogleHotspotMap({
       anchor: marker,
       map: mapRef.current,
     });
-  }, [mode, selectedIncident, clusters]);
+  }, [clusters, mode, selectedIncident, t]);
 
   return (
     <section className={mode === "operations" ? "operations-map-layout" : "public-map-layout"}>

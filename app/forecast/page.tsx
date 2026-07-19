@@ -171,7 +171,11 @@ export default function ForecastPage() {
   }, []);
 
   useEffect(() => {
-    loadForecast(selectedCell);
+    const timeoutId = window.setTimeout(() => {
+      void loadForecast(selectedCell);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [selectedCell, loadForecast]);
 
   useEffect(() => {
@@ -193,22 +197,19 @@ export default function ForecastPage() {
 
   return (
     <main className="app-page-shell">
-      <div className="app-page-container">
+      <div className="app-page-container forecast-page-nav-container">
         <Navbar />
       </div>
 
-      <div className="app-page-container app-page-content">
+      <div className="app-page-container app-page-content forecast-page-content">
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="command-hero-row">
           <div className="command-header">
             <p className="eyebrow">{t("forecast_eyebrow")}</p>
             <h1>{t("forecast_title")}</h1>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "16px" }}>
-            <button 
-              onClick={handleSignOut} 
-              style={{ background: "transparent", border: "none", color: "var(--muted)", textDecoration: "underline", cursor: "pointer", fontSize: "0.9rem", fontWeight: 600, padding: 0 }}
-            >
+          <div className="command-hero-actions">
+            <button className="dashboard-signout" onClick={handleSignOut}>
               {t("nav_sign_out")}
             </button>
             <CommandCenterTabs active="forecast" />

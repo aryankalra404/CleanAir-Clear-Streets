@@ -72,7 +72,7 @@ export interface GoogleMapsApi {
       trigger: (instance: unknown, eventName: string) => void;
     };
     Geocoder: new () => GoogleMapGeocoder;
-    InfoWindow: new () => GoogleMapInfoWindow;
+    InfoWindow: new (options?: Record<string, unknown>) => GoogleMapInfoWindow;
     Map: new (node: HTMLElement, options: Record<string, unknown>) => GoogleMapInstance;
     Marker: new (options: Record<string, unknown>) => GoogleMapMarker;
     Point: new (x: number, y: number) => GoogleMapPoint;

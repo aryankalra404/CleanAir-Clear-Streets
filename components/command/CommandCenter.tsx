@@ -528,7 +528,7 @@ export default function CommandCenter() {
           <EmptyIncidentDetail t={t} />
         )}
       {toastMessage && (
-        <div style={{ position: 'fixed', bottom: '24px', right: '24px', background: '#101828', color: 'white', padding: '12px 24px', borderRadius: '8px', fontWeight: 700, boxShadow: '0 24px 60px rgba(16,24,40,0.16)', zIndex: 1000 }}>
+        <div className="command-toast">
           {toastMessage}
         </div>
       )}

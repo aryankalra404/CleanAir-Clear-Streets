@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useLanguage } from "@/lib/languageContext";
 
@@ -20,14 +20,13 @@ const LANGUAGES = [
   { code: "as", name: "Assamese", script: "অসমীয়া" },
 ];
 
-export default function LanguageSelector() {
+type LanguageSelectorProps = {
+  onSelect?: () => void;
+};
+
+export default function LanguageSelector({ onSelect }: LanguageSelectorProps = {}) {
   const { locale, setLocale, loading } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   return (
     <>
@@ -67,7 +66,7 @@ export default function LanguageSelector() {
         </span>
       </button>
 
-      {isOpen && mounted && createPortal(
+      {isOpen && typeof document !== "undefined" && createPortal(
         <div
           style={{
             position: "fixed",
@@ -131,6 +130,7 @@ export default function LanguageSelector() {
                   onClick={() => {
                     setLocale(lang.code);
                     setIsOpen(false);
+                    onSelect?.();
                   }}
                   style={{
                     display: "flex",

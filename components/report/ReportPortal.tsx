@@ -406,11 +406,11 @@ export default function ReportPortal() {
 
   return (
     <main className="app-page-shell">
-      <div className="app-page-container" style={{ zIndex: 100 }}>
+      <div className="app-page-container report-page-container" style={{ zIndex: 100 }}>
         <Navbar />
 
-        <div className="app-page-content">
-          <header className="public-map-header" style={{ marginBottom: "24px" }}>
+        <div className="app-page-content report-page-content">
+          <header className="public-map-header report-page-header">
             <div>
               <p className="eyebrow">{t("report_eyebrow")}</p>
               <h1>{t("report_title")}</h1>
@@ -474,6 +474,7 @@ export default function ReportPortal() {
               <div className="tag-grid">
                 {hazardTags.map((tag) => (
                   <button
+                    aria-pressed={tag.id === selectedTag}
                     className={tag.id === selectedTag ? "tag-card active" : "tag-card"}
                     key={tag.id}
                     onClick={() => setSelectedTag(tag.id)}

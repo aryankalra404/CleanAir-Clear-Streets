@@ -20,7 +20,7 @@ import {
 } from "@/lib/reportSubmissions";
 import { isSensorReadingFresh } from "@/lib/supportEvidence";
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.5-flash";
 const CLASSIFICATION_PROMPT = `You are an air quality sensor for a municipal pollution monitoring system in Delhi NCR. 
 Analyze this citizen-uploaded photo for VISIBLE, active air pollution signals only.
 
