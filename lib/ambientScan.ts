@@ -23,6 +23,7 @@ import type { HazardType } from "@/lib/types";
 
 export type SensorSupportResult = {
   supported: boolean;
+  immediate: boolean;
   pollutantName: string;
   pollutantValue: number | null;
   deltaPct: number;
@@ -30,6 +31,10 @@ export type SensorSupportResult = {
   lastUpdated?: string | null;
   localBaselineValue?: number | null;
   localBaselineDeltaPct?: number | null;
+  cityBaselineValue?: number | null;
+  cityBaselineDeltaPct?: number | null;
+  watchThreshold?: number;
+  incidentThreshold?: number;
   baselineSource?: "station_history" | "delhi_median";
 };
 
@@ -64,13 +69,14 @@ export function checkSensorSupport(
   geminiType?: string,
 ): SensorSupportResult {
   if (!station) {
-    return { supported: false, pollutantName: "PM2.5", pollutantValue: null, deltaPct: 0, distanceKm: null };
+    return { supported: false, immediate: false, pollutantName: "PM2.5", pollutantValue: null, deltaPct: 0, distanceKm: null };
   }
 
   const distanceKm = station.distanceKm ?? null;
   if (distanceKm === null || distanceKm > SENSOR_PROXIMITY_KM) {
     return {
       supported: false,
+      immediate: false,
       pollutantName: "PM2.5",
       pollutantValue: null,
       deltaPct: 0,
@@ -82,6 +88,7 @@ export function checkSensorSupport(
   if (!isSensorReadingFresh(station.lastUpdated)) {
     return {
       supported: false,
+      immediate: false,
       pollutantName: "PM2.5",
       pollutantValue: null,
       deltaPct: 0,
@@ -107,6 +114,7 @@ export function checkSensorSupport(
 
   return {
     supported,
+    immediate: false,
     pollutantName: primary.name,
     pollutantValue: primary.value,
     deltaPct: primary.delta,
@@ -173,6 +181,14 @@ export type AmbientScanResult = {
   h3CellId: string;
 };
 
+export type AmbientWatchResult = {
+  cell: string;
+  consecutiveObservations: number;
+  hazardType: HazardType;
+  h3CellId: string;
+  requiredObservations: number;
+};
+
 type AmbientScanTarget = {
   label: string;
   lat: number;
@@ -182,6 +198,7 @@ type AmbientScanTarget = {
 
 type CandidateResult = {
   confidence: number;
+  consecutiveObservations: number;
   dominant: {
     hazardType: HazardType;
     sensorResult: ReturnType<typeof checkSensorSupport>;
@@ -216,6 +233,23 @@ const SENSOR_BASELINE_WINDOW_DAYS = 7;
 const SENSOR_BASELINE_MIN_SAMPLES = 3;
 const SENSOR_BASELINE_MAX_SAMPLES = 56;
 const SATELLITE_SCAN_CONCURRENCY = 4;
+const REQUIRED_CONSECUTIVE_OBSERVATIONS = 2;
+const MAX_OBSERVATION_GAP_HOURS = 6;
+
+// Indian AQI concentration breakpoints (µg/m³). A single reading in the
+// "Poor" band can open an incident immediately. A "Moderate" reading must
+// also be anomalous and persist across two independently timestamped source
+// observations. This is more defensible than applying one arbitrary +50%
+// multiplier to pollutants with very different health-response curves.
+const AMBIENT_SENSOR_THRESHOLDS: Record<
+  "PM2.5" | "PM10" | "NO2" | "SO2",
+  { watch: number; incident: number }
+> = {
+  "PM2.5": { watch: 61, incident: 91 },
+  PM10: { watch: 101, incident: 251 },
+  NO2: { watch: 81, incident: 181 },
+  SO2: { watch: 81, incident: 381 },
+};
 
 function median(values: Array<number | null | undefined>) {
   const usable = values
@@ -325,29 +359,69 @@ function getBaselineValue(pollutantName: string, baseline: SensorBaseline) {
   return baseline.pm25;
 }
 
+function getAmbientSensorThresholds(pollutantName: string) {
+  return (
+    AMBIENT_SENSOR_THRESHOLDS[pollutantName as keyof typeof AMBIENT_SENSOR_THRESHOLDS] ??
+    AMBIENT_SENSOR_THRESHOLDS["PM2.5"]
+  );
+}
+
 function applyAmbientSensorThreshold(
+  hazardType: HazardType,
   sensorResult: SensorSupportResult,
+  station: NearbyStationReading | null,
   baseline: SensorBaseline,
   baselineSource: "station_history" | "delhi_median",
+  cityBaseline: SensorBaseline,
 ): SensorSupportResult {
   const localBaselineValue = getBaselineValue(sensorResult.pollutantName, baseline);
+  const cityBaselineValue = getBaselineValue(sensorResult.pollutantName, cityBaseline);
   const localBaselineDeltaPct =
     sensorResult.pollutantValue !== null && localBaselineValue !== null && localBaselineValue > 0
       ? Math.round(
           ((sensorResult.pollutantValue - localBaselineValue) / localBaselineValue) * 100,
         )
       : null;
+  const cityBaselineDeltaPct =
+    sensorResult.pollutantValue !== null && cityBaselineValue !== null && cityBaselineValue > 0
+      ? Math.round(
+          ((sensorResult.pollutantValue - cityBaselineValue) / cityBaselineValue) * 100,
+        )
+      : null;
   const extreme = sensorResult.deltaPct >= SENSOR_EXTREME_DELTA_PCT;
   const locallyElevated =
     localBaselineDeltaPct !== null &&
     localBaselineDeltaPct >= SENSOR_LOCAL_BASELINE_DELTA_PCT;
+  const citywideHotspot =
+    cityBaselineDeltaPct !== null &&
+    cityBaselineDeltaPct >= SENSOR_LOCAL_BASELINE_DELTA_PCT;
+  const thresholds = getAmbientSensorThresholds(sensorResult.pollutantName);
+  const meetsWatchThreshold =
+    sensorResult.pollutantValue !== null &&
+    sensorResult.pollutantValue >= thresholds.watch;
+  const immediate =
+    sensorResult.pollutantValue !== null &&
+    sensorResult.pollutantValue >= thresholds.incident;
+  const sourceSpecificEnough =
+    hazardType !== "dust" || isDustDominant(station?.pm10, station?.pm25);
 
   return {
     ...sensorResult,
-    supported: sensorResult.supported && (extreme || locallyElevated),
+    // A persistent hotspot can become its own station-history baseline. It
+    // still needs to surface when it is materially worse than Delhi overall;
+    // otherwise severe but chronic readings are incorrectly normalized away.
+    supported:
+      sourceSpecificEnough &&
+      meetsWatchThreshold &&
+      (immediate || extreme || locallyElevated || citywideHotspot),
+    immediate,
     baselineSource,
+    cityBaselineDeltaPct,
+    cityBaselineValue,
     localBaselineDeltaPct,
     localBaselineValue,
+    incidentThreshold: thresholds.incident,
+    watchThreshold: thresholds.watch,
   };
 }
 
@@ -363,6 +437,25 @@ function timestampLikeToMs(value: unknown): number | null {
     return date && Number.isFinite(date.getTime()) ? date.getTime() : null;
   }
   return null;
+}
+
+function getAmbientEvidenceKey(
+  target: AmbientScanTarget,
+  satellite: SatelliteDataResult | null,
+  passedChecks: CandidateResult["passedChecks"],
+) {
+  const hasSensorSupport = passedChecks.some((check) => check.sensorResult.supported);
+  const hasSatelliteSupport = passedChecks.some((check) => check.satelliteResult.supported);
+  const sensorVersion = hasSensorSupport
+    ? (target.station?.lastUpdated ?? "sensor-unknown")
+    : "no-sensor";
+  const satelliteVersion = hasSatelliteSupport
+    ? `${satellite?.windowEnd ?? "satellite-unknown"}:${satellite?.rawValue ?? "null"}:${
+        satellite?.aerosolIndex.rawValue ?? "null"
+      }`
+    : "no-satellite";
+
+  return `${sensorVersion}|${satelliteVersion}`;
 }
 
 function shouldResolveUnsupportedAmbientIncident(data: Record<string, unknown>) {
@@ -480,8 +573,10 @@ async function fetchSatelliteForTargets(targets: AmbientScanTarget[]) {
 export async function scanAmbientHotspots(): Promise<{
   scanned: number;
   promoted: AmbientScanResult[];
+  watching: AmbientWatchResult[];
 }> {
   const candidates: CandidateResult[] = [];
+  const watching: AmbientWatchResult[] = [];
   const targets = await getAmbientScanTargets();
   const delhiMedianBaseline = buildDelhiMedianBaseline(targets);
   const satelliteByCell = await fetchSatelliteForTargets(targets);
@@ -509,9 +604,12 @@ export async function scanAmbientHotspots(): Promise<{
 
     for (const hazardType of HAZARD_TYPES) {
       const sensorResult = applyAmbientSensorThreshold(
+        hazardType,
         checkSensorSupport(hazardType, station),
+        station,
         sensorBaseline.baseline,
         sensorBaseline.source,
+        delhiMedianBaseline,
       );
       sensorResultsByHazard.set(hazardType, sensorResult);
     }
@@ -542,11 +640,27 @@ export async function scanAmbientHotspots(): Promise<{
       }
     }
 
+    const detectionStateRef = adminDb.collection("ambientDetectionState").doc(h3CellId);
+    const [existingSnap, detectionStateSnap] = await Promise.all([
+      incidentRef.get(),
+      detectionStateRef.get(),
+    ]);
+    const detectionState = detectionStateSnap.data();
+
     // Nothing triggered for this cell anymore. Do not resolve immediately:
     // public CPCB feeds can lag or temporarily omit pollutants, so one weak
     // scan should not make the Delhi auto-detection layer collapse.
     if (passedChecks.length === 0) {
-      const existingSnap = await incidentRef.get();
+      if ((detectionState?.consecutiveObservations ?? 0) > 0) {
+        await detectionStateRef.set(
+          {
+            consecutiveObservations: 0,
+            status: "clear",
+            updatedAt: adminServerTimestamp(),
+          },
+          { merge: true },
+        );
+      }
       const existingData = existingSnap.data();
       if (!existingSnap.exists || !existingData || existingData.status === "resolved") {
         continue;
@@ -578,6 +692,62 @@ export async function scanAmbientHotspots(): Promise<{
       passedChecks.find((c) => c.hazardType === HAZARD_PRIORITY[1]) ??
       passedChecks[0];
 
+    const evidenceKey = getAmbientEvidenceKey(target, satellite, passedChecks);
+    const previousEvidenceKey =
+      typeof detectionState?.lastEvidenceKey === "string"
+        ? detectionState.lastEvidenceKey
+        : null;
+    const isNewObservation = evidenceKey !== previousEvidenceKey;
+    const lastObservationMs = timestampLikeToMs(detectionState?.lastObservationAt);
+    const observationGapIsValid =
+      lastObservationMs !== null &&
+      Date.now() - lastObservationMs <= MAX_OBSERVATION_GAP_HOURS * 60 * 60 * 1000;
+    const previousConsecutive = Number(detectionState?.consecutiveObservations ?? 0);
+    const consecutiveObservations = isNewObservation
+      ? observationGapIsValid
+        ? previousConsecutive + 1
+        : 1
+      : Math.max(1, previousConsecutive);
+    const hasImmediateSensorEvidence = passedChecks.some(
+      (check) => check.sensorResult.supported && check.sensorResult.immediate,
+    );
+    const hasIndependentPhysicalAgreement = passedChecks.some(
+      (check) => check.tier === "sensor_satellite_confirmed",
+    );
+    const existingIncidentIsActive =
+      existingSnap.exists && existingSnap.data()?.status !== "resolved";
+    const confirmed =
+      hasImmediateSensorEvidence ||
+      hasIndependentPhysicalAgreement ||
+      consecutiveObservations >= REQUIRED_CONSECUTIVE_OBSERVATIONS ||
+      existingIncidentIsActive;
+
+    if (isNewObservation || detectionState?.status !== (confirmed ? "confirmed" : "watch")) {
+      await detectionStateRef.set(
+        {
+          consecutiveObservations,
+          hazardType: dominant.hazardType,
+          lastEvidenceKey: evidenceKey,
+          ...(isNewObservation ? { lastObservationAt: adminServerTimestamp() } : {}),
+          location: { label: target.label, lat: target.lat, lng: target.lng },
+          status: confirmed ? "confirmed" : "watch",
+          updatedAt: adminServerTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+
+    if (!confirmed) {
+      watching.push({
+        cell: target.label,
+        consecutiveObservations,
+        hazardType: dominant.hazardType,
+        h3CellId,
+        requiredObservations: REQUIRED_CONSECUTIVE_OBSERVATIONS,
+      });
+      continue;
+    }
+
     const { sensorResult, satelliteResult, tier } = dominant;
     const hazardType = dominant.hazardType;
 
@@ -605,6 +775,7 @@ export async function scanAmbientHotspots(): Promise<{
 
     candidates.push({
       confidence,
+      consecutiveObservations,
       dominant,
       fusion,
       h3CellId,
@@ -641,10 +812,20 @@ export async function scanAmbientHotspots(): Promise<{
   }
 
   for (const candidate of topCandidates) {
-    const { confidence, dominant, fusion, h3CellId, passedChecks, satellite, target } = candidate;
+    const {
+      confidence,
+      consecutiveObservations,
+      dominant,
+      fusion,
+      h3CellId,
+      passedChecks,
+      satellite,
+      target,
+    } = candidate;
     const { sensorResult, satelliteResult, tier } = dominant;
     const hazardType = dominant.hazardType;
     const incidentRef = adminDb.collection("incidents").doc(`ambient-${h3CellId}`);
+    const existingSnap = await incidentRef.get();
     const possibleSources = passedChecks.map((c) => c.hazardType);
     const source: "sensor" | "satellite" =
       tier === "satellite_detected" ? "satellite" : "sensor";
@@ -665,11 +846,6 @@ export async function scanAmbientHotspots(): Promise<{
       : satelliteResult.supported
         ? "Satellite anomaly detected"
         : "Sensor anomaly detected";
-
-    // Check if this cell's incident doc already exists so we can preserve
-    // its original createdAt timestamp. setDoc with merge:true would
-    // overwrite createdAt on every scan, making Age always show "1m".
-    const existingSnap = await incidentRef.get();
 
     const sharedPayload = {
       aiConfidence: Math.round(confidence),
@@ -736,6 +912,12 @@ export async function scanAmbientHotspots(): Promise<{
           primaryValue: sensorResult.pollutantValue,
           localBaselineDeltaPct: sensorResult.localBaselineDeltaPct,
           localBaselineValue: sensorResult.localBaselineValue,
+          cityBaselineDeltaPct: sensorResult.cityBaselineDeltaPct,
+          cityBaselineValue: sensorResult.cityBaselineValue,
+          consecutiveObservations,
+          immediate: sensorResult.immediate,
+          incidentThreshold: sensorResult.incidentThreshold,
+          watchThreshold: sensorResult.watchThreshold,
           baselineSource: sensorResult.baselineSource,
           distanceKm: sensorResult.distanceKm ?? undefined,
           lastUpdated: sensorResult.lastUpdated ?? undefined,
@@ -758,5 +940,5 @@ export async function scanAmbientHotspots(): Promise<{
     promoted.push({ cell: target.label, hazardType, tier, h3CellId });
   }
 
-  return { scanned: targets.length, promoted };
+  return { scanned: targets.length, promoted, watching };
 }

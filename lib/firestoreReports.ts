@@ -12,6 +12,8 @@ export interface FirestoreReport {
   anonymous?: boolean;
   aiConfidence?: number;
   createdAt?: Timestamp;
+  classificationAttemptError?: string;
+  classificationError?: string;
   updatedAt?: Timestamp;
   geminiClassification?: {
     confidence?: number;

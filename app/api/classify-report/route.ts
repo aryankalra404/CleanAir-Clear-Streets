@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { deleteField, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import {
   getNearestStationReading,
   getPm25DeltaFromReference,
@@ -20,7 +20,11 @@ import {
 } from "@/lib/reportSubmissions";
 import { isSensorReadingFresh } from "@/lib/supportEvidence";
 
-const GEMINI_MODEL = "gemini-3.5-flash";
+const GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"] as const;
+const IMAGE_FETCH_TIMEOUT_MS = 10_000;
+const GEMINI_REQUEST_TIMEOUT_MS = 20_000;
+const CONTEXT_LOOKUP_TIMEOUT_MS = 12_000;
+const PROMOTION_TIMEOUT_MS = 10_000;
 const CLASSIFICATION_PROMPT = `You are an air quality sensor for a municipal pollution monitoring system in Delhi NCR. 
 Analyze this citizen-uploaded photo for VISIBLE, active air pollution signals only.
 
@@ -168,6 +172,31 @@ function sleep(ms: number) {
   });
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)),
+      timeoutMs,
+    );
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function getOptionalContext<T>(promise: Promise<T>, label: string) {
+  try {
+    return await withTimeout(promise, CONTEXT_LOOKUP_TIMEOUT_MS, label);
+  } catch (error) {
+    console.warn(`${label} unavailable during report classification`, error);
+    return null;
+  }
+}
+
 function stripJsonFences(text: string) {
   return text
     .trim()
@@ -176,8 +205,52 @@ function stripJsonFences(text: string) {
     .trim();
 }
 
+function extractFirstJsonObject(text: string) {
+  const start = text.indexOf("{");
+  if (start < 0) throw new Error("Gemini response did not include a JSON object.");
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+    } else if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+
+  throw new Error("Gemini response included incomplete classification JSON.");
+}
+
 function parseClassification(text: string): GeminiClassification {
-  const parsed = JSON.parse(stripJsonFences(text)) as Partial<GeminiClassification>;
+  const normalized = stripJsonFences(text);
+  let parsed: Partial<GeminiClassification>;
+  try {
+    parsed = JSON.parse(normalized) as Partial<GeminiClassification>;
+  } catch {
+    // Gemini occasionally appends a sentence after an otherwise valid JSON
+    // object despite responseMimeType. Preserve the valid result instead of
+    // forcing the citizen through the full retry chain.
+    parsed = JSON.parse(extractFirstJsonObject(normalized)) as Partial<GeminiClassification>;
+  }
   const validTypes: GeminiClassificationType[] = [
     "clear",
     "dust",
@@ -209,7 +282,9 @@ async function fetchImageAsInlineData(photoUrl: string, requestUrl: string) {
   const imageUrl = photoUrl.startsWith("/")
     ? new URL(photoUrl, requestUrl).toString()
     : photoUrl;
-  const response = await fetch(imageUrl);
+  const response = await fetch(imageUrl, {
+    signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS),
+  });
 
   if (!response.ok) {
     throw new Error(`Could not fetch photoUrl (${response.status}).`);
@@ -229,7 +304,6 @@ async function callGeminiWithRetry(inlineData: { data: string; mimeType: string 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("Missing GEMINI_API_KEY.");
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
   const payload = {
     contents: [
       {
@@ -250,29 +324,36 @@ async function callGeminiWithRetry(inlineData: { data: string; mimeType: string 
     },
   };
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < GEMINI_MODELS.length; attempt += 1) {
+    const model = GEMINI_MODELS[attempt];
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     try {
       const response = await fetch(endpoint, {
         body: JSON.stringify(payload),
         headers: { "Content-Type": "application/json" },
         method: "POST",
+        signal: AbortSignal.timeout(GEMINI_REQUEST_TIMEOUT_MS),
       });
 
-      if (response.status === 429 && attempt === 0) {
-        await sleep(900);
-        continue;
-      }
-
       if (!response.ok) {
-        throw new Error(`Gemini request failed (${response.status}).`);
+        const errorPayload = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        const providerMessage = errorPayload?.error?.message?.trim();
+        throw new Error(
+          `Gemini ${model} request failed (${response.status})${
+            providerMessage ? `: ${providerMessage}` : "."
+          }`,
+        );
       }
 
       const json = (await response.json()) as GeminiResponse;
       const text = json.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text;
       if (!text) throw new Error("Gemini response did not include text.");
-      return parseClassification(text);
+      return { classification: parseClassification(text), model };
     } catch (error) {
-      if (attempt === 0) {
+      if (attempt < GEMINI_MODELS.length - 1) {
+        console.warn(`${model} unavailable; retrying classification with fallback model.`, error);
         await sleep(900);
         continue;
       }
@@ -286,6 +367,8 @@ async function callGeminiWithRetry(inlineData: { data: string; mimeType: string 
 export async function POST(request: Request) {
   let reportId = "";
   let finalAttempt = true;
+  let classificationSaved = false;
+  let savedClassification: GeminiClassification | null = null;
   const startedAt = Date.now();
 
   try {
@@ -315,14 +398,19 @@ export async function POST(request: Request) {
     const lat = Number(report.location?.lat);
     const lng = Number(report.location?.lng);
     const inlineData = await fetchImageAsInlineData(report.photoUrl, request.url);
-    const classification = await callGeminiWithRetry(inlineData);
+    const { classification, model: aiModel } = await callGeminiWithRetry(inlineData);
+    savedClassification = classification;
     const h3CellId = report.h3CellId ?? DEFAULT_H3_CELL_ID;
     const pollutionSignalConfidence = getPollutionSignalConfidence(classification);
 
     if (!isPollutionClassification(classification)) {
       await updateDoc(reportRef, {
-        aiModel: GEMINI_MODEL,
+        aiModel,
         classifiedAt: serverTimestamp(),
+        classificationAttemptError: deleteField(),
+        classificationAttemptFailedAt: deleteField(),
+        classificationError: deleteField(),
+        classificationFailedAt: deleteField(),
         geminiClassification: classification,
         status: "no_signal",
         validation: {
@@ -345,6 +433,7 @@ export async function POST(request: Request) {
             "Not promotion eligible because Gemini did not find a pollution signal.",
         },
       });
+      classificationSaved = true;
 
       console.info(
         `Report ${reportId} classified as ${classification.type} in ${Date.now() - startedAt}ms; local context skipped.`,
@@ -353,13 +442,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ classification, ok: true });
     }
 
+    // Persist the visual result before optional sensor, satellite, and weather
+    // enrichment. Those providers can be slow or temporarily unavailable, but
+    // they must not leave a successfully analyzed photo stuck in `pending`.
+    const visualOnlyFusion = computeFusionConfidence({
+      corroborationScore: null,
+      satelliteScore: null,
+      sensorScore: null,
+      visualScore: pollutionSignalConfidence,
+    });
+    await updateDoc(reportRef, {
+      aiModel,
+      classifiedAt: serverTimestamp(),
+      classificationAttemptError: deleteField(),
+      classificationAttemptFailedAt: deleteField(),
+      classificationError: deleteField(),
+      classificationFailedAt: deleteField(),
+      geminiClassification: classification,
+      status: "classified",
+      validation: {
+        ...(report.validation ?? {}),
+        alertReason: getPostClassificationReason(classification),
+        citizenSignal: {
+          averageConfidence: pollutionSignalConfidence,
+          reportCount: 1,
+          windowMinutes: 1,
+        },
+        fusion: {
+          coverageAdjusted: false,
+          finalConfidence: visualOnlyFusion.finalConfidence,
+          h3CellId,
+          satelliteWeight: visualOnlyFusion.satelliteWeight,
+          sensorWeight: visualOnlyFusion.sensorWeight,
+          visualWeight: visualOnlyFusion.visualWeight,
+        },
+        promotionReason:
+          "Gemini classified report; gathering context before corroboration checks.",
+      },
+    });
+    classificationSaved = true;
+
     const reportCreatedAt = getReportCreatedAtDate(report);
     const [satelliteData, nearestStation, windData] =
       Number.isFinite(lat) && Number.isFinite(lng)
         ? await Promise.all([
-            getSatelliteDataForPoint(lat, lng, reportCreatedAt),
-            getNearestStationReading(lat, lng),
-            getWindData(lat, lng),
+            getOptionalContext(
+              getSatelliteDataForPoint(lat, lng, reportCreatedAt),
+              "Satellite lookup",
+            ),
+            getOptionalContext(getNearestStationReading(lat, lng), "Sensor lookup"),
+            getOptionalContext(getWindData(lat, lng), "Wind lookup"),
           ])
         : [null, null, null];
     const primaryPollutant = getPrimaryPollutant(classification.type, nearestStation);
@@ -422,7 +554,7 @@ export async function POST(request: Request) {
     });
 
     await updateDoc(reportRef, {
-      aiModel: GEMINI_MODEL,
+      aiModel,
       classifiedAt: serverTimestamp(),
       geminiClassification: classification,
       status: "classified",
@@ -477,7 +609,11 @@ export async function POST(request: Request) {
       },
     });
 
-    await promoteCellIfThresholdPassed(h3CellId);
+    await withTimeout(
+      promoteCellIfThresholdPassed(h3CellId),
+      PROMOTION_TIMEOUT_MS,
+      "Report promotion",
+    );
 
     console.info(
       `Report ${reportId} classified as ${classification.type} in ${Date.now() - startedAt}ms; snapshot stored: ${snapshot.stored}.`,
@@ -486,6 +622,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ classification, ok: true });
   } catch (error) {
     console.error("Report classification failed", error);
+
+    // Gemini's answer is the user-facing classification. Once it has been
+    // saved, a later enrichment/promotion failure is non-fatal and must not
+    // revert the report to `classification_failed`.
+    if (classificationSaved) {
+      return NextResponse.json({
+        classification: savedClassification,
+        ok: true,
+        warning: error instanceof Error ? error.message : "Context enrichment failed.",
+      });
+    }
 
     if (reportId && isFirebaseConfigured && db) {
       const failurePayload = finalAttempt

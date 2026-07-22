@@ -119,6 +119,24 @@ function getAlertReasonLabel(isAutoDetected: boolean, t: Translator) {
     : t("alert_reason_citizen_promoted");
 }
 
+function getQueueIncidentMeta(incident: Incident, t: Translator) {
+  const tierLabel = incident.evidence?.tier
+    ? t("tier_" + incident.evidence.tier) || TIER_LABELS[incident.evidence.tier]
+    : incident.source === "citizen"
+      ? t("source_filter_citizen")
+      : incident.source === "sensor"
+        ? t("source_filter_sensor")
+        : t("source_filter_satellite");
+  const isAutoDetected = getCitizenReportCount(incident) === 0;
+  const metaParts = [getIncidentHazardLabel(incident, t), tierLabel];
+
+  if (!isAutoDetected) {
+    metaParts.push(`${incident.aiConfidence}% ${t("map_confidence")}`);
+  }
+
+  return metaParts.join(" · ");
+}
+
 function getIncidentNotes(incident: Incident) {
   return [
     incident.note,
@@ -173,12 +191,20 @@ export default function CommandCenter() {
         const errorPayload = await response.json().catch(() => null) as { error?: string } | null;
         throw new Error(errorPayload?.error ?? `scan-ambient responded ${response.status}`);
       }
-      const result = await response.json() as { promoted?: unknown[]; scanned?: number };
+      const result = await response.json() as {
+        promoted?: unknown[];
+        scanned?: number;
+        watching?: unknown[];
+      };
       if (notify) {
+        const completedMessage = t("ambient_scan_complete")
+          .replace("{active}", String(result.promoted?.length ?? 0))
+          .replace("{scanned}", String(result.scanned ?? 0));
+        const watchingCount = result.watching?.length ?? 0;
         showToast(
-          t("ambient_scan_complete")
-            .replace("{active}", String(result.promoted?.length ?? 0))
-            .replace("{scanned}", String(result.scanned ?? 0)),
+          watchingCount > 0
+            ? `${completedMessage} · ${watchingCount} awaiting confirmation`
+            : completedMessage,
         );
       }
     } catch (error) {
@@ -472,14 +498,7 @@ export default function CommandCenter() {
                 <strong>
                   {incident.neighborhood}
                 </strong>
-                <small>
-                  {getIncidentHazardLabel(incident, t)}
-                  {incident.evidence?.tier
-                    ? ` · ${t("tier_" + incident.evidence.tier) || TIER_LABELS[incident.evidence.tier]}`
-                    : ` · ${incident.source === "citizen" ? t("source_filter_citizen") : incident.source === "sensor" ? t("source_filter_sensor") : t("source_filter_satellite")}`}
-                  {" · "}
-                  {incident.aiConfidence}% {t("map_confidence")}
-                </small>
+                <small>{getQueueIncidentMeta(incident, t)}</small>
               </span>
               <span className={`queue-status ${incident.status}`}>
                 {t("status_" + incident.status) || formatStatus(incident.status)}

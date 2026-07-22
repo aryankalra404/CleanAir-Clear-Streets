@@ -90,6 +90,12 @@ export interface IncidentEvidence {
     primaryValue?: number | null;
     localBaselineDeltaPct?: number | null;
     localBaselineValue?: number | null;
+    cityBaselineDeltaPct?: number | null;
+    cityBaselineValue?: number | null;
+    consecutiveObservations?: number;
+    immediate?: boolean;
+    incidentThreshold?: number;
+    watchThreshold?: number;
     baselineSource?: "station_history" | "delhi_median";
     trend: "rising" | "flat" | "falling" | "insufficient_data";
     source?: "CPCB" | "estimated";

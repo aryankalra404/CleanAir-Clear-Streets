@@ -446,8 +446,14 @@ async function classifyReportWithRetry(reportId: string, attempt = 1): Promise<v
       body: JSON.stringify({ finalAttempt: attempt >= MAX_ATTEMPTS, reportId }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
+      // A browser fetch without a deadline never reaches the retry path if a
+      // deployment or upstream provider stops responding.
+      signal: AbortSignal.timeout(70_000),
     });
-    if (!res.ok) throw new Error(`classify-report responded ${res.status}`);
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error ?? `classify-report responded ${res.status}`);
+    }
   } catch (err) {
     if (attempt >= MAX_ATTEMPTS) {
       console.error(

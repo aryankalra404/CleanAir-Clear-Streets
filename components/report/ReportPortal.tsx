@@ -195,9 +195,11 @@ export default function ReportPortal() {
       }
 
       if (report.status === "classification_failed") {
+        const reason = report.classificationError ?? report.classificationAttemptError;
         setClassificationFeedback({
-          message:
-            "Report saved, but automatic photo analysis failed. It stays hidden until reviewed or retried.",
+          message: reason
+            ? `Automatic photo analysis failed: ${reason}`
+            : "Report saved, but automatic photo analysis failed. It stays hidden until reviewed or retried.",
           tone: "error",
         });
         return;
